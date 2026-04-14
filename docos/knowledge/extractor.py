@@ -6,6 +6,7 @@ may be rule-based, LLM-assisted, or a hybrid.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime
 from typing import Any, Protocol
@@ -60,6 +61,17 @@ def _make_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex[:10]}"
 
 
+def _deterministic_id(prefix: str, *components: str) -> str:
+    """Generate a deterministic ID from stable content inputs.
+
+    Uses SHA-256 of concatenated components to produce a stable hash.
+    Same inputs always produce the same ID.
+    """
+    payload = "|".join(components)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:10]
+    return f"{prefix}_{digest}"
+
+
 class RuleBasedEntityExtractor:
     """Extract entities using deterministic rules from DocIR.
 
@@ -76,7 +88,7 @@ class RuleBasedEntityExtractor:
         for block in docir.blocks:
             if block.block_type == BlockType.TITLE and block.text_plain:
                 entities.append(EntityRecord(
-                    entity_id=_make_id("ent"),
+                    entity_id=_deterministic_id("ent", "document", docir.source_id, block.text_plain.strip()),
                     canonical_name=block.text_plain.strip()[:200],
                     entity_type=EntityType.DOCUMENT,
                     source_ids=[docir.source_id],
@@ -92,7 +104,7 @@ class RuleBasedEntityExtractor:
                 if name and name not in seen_headings and len(name) > 2:
                     seen_headings.add(name)
                     entities.append(EntityRecord(
-                        entity_id=_make_id("ent"),
+                        entity_id=_deterministic_id("ent", "concept", docir.source_id, name),
                         canonical_name=name,
                         entity_type=EntityType.CONCEPT,
                         source_ids=[docir.source_id],
@@ -113,26 +125,60 @@ class RuleBasedClaimExtractor:
         claims: list[ClaimRecord] = []
 
         # Create structural claims from heading sections
-        heading_blocks = [b for b in docir.blocks if b.block_type == BlockType.HEADING]
+        # Sort all blocks by (page_no, reading_order) for sequential scan
+        sorted_blocks = sorted(docir.blocks, key=lambda b: (b.page_no, b.reading_order))
+        heading_blocks = [b for b in sorted_blocks if b.block_type == BlockType.HEADING]
 
-        for heading in heading_blocks:
-            # Find paragraph blocks under this heading (same page, higher reading order)
-            section_blocks = [
-                b for b in docir.blocks
-                if b.page_no == heading.page_no
-                and b.block_type == BlockType.PARAGRAPH
-                and b.reading_order > heading.reading_order
+        for idx, heading in enumerate(heading_blocks):
+            # Determine the boundary: next heading or end of document
+            if idx + 1 < len(heading_blocks):
+                next_heading = heading_blocks[idx + 1]
+                # Section includes blocks from this heading up to (not including) next heading
+                section_blocks = [
+                    b for b in sorted_blocks
+                    if (b.page_no, b.reading_order) >= (heading.page_no, heading.reading_order)
+                    and (b.page_no, b.reading_order) < (next_heading.page_no, next_heading.reading_order)
+                    and b.block_type == BlockType.PARAGRAPH
+                ]
+            else:
+                # Last heading: section extends to end of document
+                section_blocks = [
+                    b for b in sorted_blocks
+                    if (b.page_no, b.reading_order) >= (heading.page_no, heading.reading_order)
+                    and b.block_type == BlockType.PARAGRAPH
+                ]
+
+            # Also include table/figure evidence blocks in the section
+            evidence_blocks = [
+                b for b in sorted_blocks
+                if (b.page_no, b.reading_order) >= (heading.page_no, heading.reading_order)
+                and (idx + 1 >= len(heading_blocks) or (b.page_no, b.reading_order) < (heading_blocks[idx + 1].page_no, heading_blocks[idx + 1].reading_order))
+                and b.block_type in (BlockType.TABLE, BlockType.FIGURE)
             ]
 
             if not section_blocks:
                 continue
 
-            # Create a claim for the section
+            # Create anchors from section paragraphs and evidence blocks
             first_para = section_blocks[0]
-            text = first_para.text_plain[:300]
+            text = " ".join(b.text_plain[:100] for b in section_blocks[:3])[:300]
+
+            anchor_blocks = section_blocks + evidence_blocks
+            anchors = [
+                EvidenceAnchor(
+                    anchor_id=_deterministic_id("anc", docir.source_id, b.block_id, str(b.page_no)),
+                    source_id=docir.source_id,
+                    doc_id=docir.doc_id,
+                    page_no=b.page_no,
+                    block_id=b.block_id,
+                    quote=b.text_plain[:100],
+                    confidence=b.confidence,
+                )
+                for b in anchor_blocks
+            ]
 
             anchor = EvidenceAnchor(
-                anchor_id=_make_id("anc"),
+                anchor_id=_deterministic_id("anc", docir.source_id, first_para.block_id, str(first_para.page_no)),
                 source_id=docir.source_id,
                 doc_id=docir.doc_id,
                 page_no=first_para.page_no,
@@ -142,13 +188,13 @@ class RuleBasedClaimExtractor:
             )
 
             claim = ClaimRecord(
-                claim_id=_make_id("claim"),
+                claim_id=_deterministic_id("claim", docir.source_id, heading.block_id, text[:50]),
                 statement=f"Section '{heading.text_plain.strip()}' discusses: {text[:150]}",
-                page_refs=[heading.page_no, first_para.page_no],
+                page_refs=list({b.page_no for b in anchor_blocks}),
                 status=ClaimStatus.SUPPORTED,
-                evidence_anchors=[anchor],
+                evidence_anchors=anchors,
                 supporting_sources=[docir.source_id],
-                confidence=min(heading.confidence, first_para.confidence),
+                confidence=min((b.confidence for b in anchor_blocks), default=1.0),
             )
             claims.append(claim)
 
@@ -179,7 +225,7 @@ class RuleBasedRelationExtractor:
             doc_id = doc_entities[0].entity_id
             for ent in other_entities:
                 relations.append(KnowledgeRelation(
-                    relation_id=_make_id("rel"),
+                    relation_id=_deterministic_id("rel", "mentions", doc_id, ent.entity_id),
                     relation_type=KnowledgeRelationType.MENTIONS,
                     source_id=doc_id,
                     target_id=ent.entity_id,
@@ -191,7 +237,7 @@ class RuleBasedRelationExtractor:
             for ent in entities:
                 if ent.canonical_name.lower() in claim.statement.lower():
                     relations.append(KnowledgeRelation(
-                        relation_id=_make_id("rel"),
+                        relation_id=_deterministic_id("rel", "claim_mention", claim.claim_id, ent.entity_id),
                         relation_type=KnowledgeRelationType.MENTIONS,
                         source_id=claim.claim_id,
                         target_id=ent.entity_id,

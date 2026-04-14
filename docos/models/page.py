@@ -161,6 +161,32 @@ class DecisionPageContent(BaseModel):
     review_date: date | None = None
 
 
+class ParserPageContent(BaseModel):
+    """Content structure for a parser page."""
+
+    parser_name: str = ""
+    parser_version: str = ""
+    capabilities: list[str] = Field(default_factory=list)
+    supported_file_types: list[str] = Field(default_factory=list)
+    route_assignments: list[str] = Field(default_factory=list)
+    known_strengths: list[str] = Field(default_factory=list)
+    known_limitations: list[str] = Field(default_factory=list)
+    fallback_parsers: list[str] = Field(default_factory=list)
+    quality_metrics: dict[str, float] = Field(default_factory=dict)
+
+
+class BenchmarkPageContent(BaseModel):
+    """Content structure for a benchmark page."""
+
+    benchmark_name: str = ""
+    dataset_description: str = ""
+    evaluation_dimensions: list[str] = Field(default_factory=list)
+    ground_truth_source: str = ""
+    parser_results: list[str] = Field(default_factory=list)
+    comparison_charts: list[str] = Field(default_factory=list)
+    open_issues: list[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Page union — any typed page in the wiki
 # ---------------------------------------------------------------------------
@@ -173,4 +199,6 @@ PAGE_CONTENT_MAP: dict[PageType, type[BaseModel]] = {
     PageType.FAILURE: FailurePageContent,
     PageType.COMPARISON: ComparisonPageContent,
     PageType.DECISION: DecisionPageContent,
+    PageType.PARSER: ParserPageContent,
+    PageType.BENCHMARK: BenchmarkPageContent,
 }

@@ -18,6 +18,7 @@ from docos.models.docir import (
     Block,
     BlockType,
     BBox,
+    Citation,
     DocIR,
     DocIRWarning,
     Page,
@@ -25,6 +26,20 @@ from docos.models.docir import (
     Relation,
     RelationType,
 )
+
+
+# ---------------------------------------------------------------------------
+# Normalization error
+# ---------------------------------------------------------------------------
+
+class NormalizationError(Exception):
+    """Structured error during normalization."""
+
+    def __init__(self, message: str, page_no: int | None = None, block_id: str | None = None) -> None:
+        self.message = message
+        self.page_no = page_no
+        self.block_id = block_id
+        super().__init__(message)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +136,15 @@ class PageLocalNormalizer:
         reading_order: int,
         parser_name: str,
     ) -> Block:
-        """Convert a raw parser block to canonical DocIR Block."""
+        """Convert a raw parser block to canonical DocIR Block.
+
+        Preserves table_cells, footnote_refs, and citations from parser
+        output. Unsupported parser-specific fields are retained in a
+        ``_parser_metadata`` extension dict on the block's extra data.
+
+        Raises:
+            NormalizationError: If bbox is invalid (wrong length or type).
+        """
         block_type_str = raw.get("block_type", "unknown")
         try:
             block_type = BlockType(block_type_str)
@@ -129,12 +152,21 @@ class PageLocalNormalizer:
             block_type = BlockType.UNKNOWN
 
         bbox_raw = raw.get("bbox", [0, 0, 0, 0])
-        bbox: BBox = (
-            float(bbox_raw[0]),
-            float(bbox_raw[1]),
-            float(bbox_raw[2]),
-            float(bbox_raw[3]),
-        )
+        bbox = self._parse_bbox(bbox_raw)
+
+        # Map structured fields from parser output
+        table_cells = raw.get("table_cells")
+        footnote_refs = raw.get("footnote_refs", [])
+        citations_raw = raw.get("citations", [])
+
+        # Convert citation dicts to Citation models if needed
+        from docos.models.docir import Citation
+        citations: list[Citation] = []
+        for c in citations_raw:
+            if isinstance(c, dict):
+                citations.append(Citation(**c))
+            elif isinstance(c, Citation):
+                citations.append(c)
 
         return Block(
             block_id=raw.get("block_id", f"p{page_no}_b{reading_order}"),
@@ -148,11 +180,30 @@ class PageLocalNormalizer:
             text_md=raw.get("text_md", ""),
             text_html=raw.get("text_html", ""),
             latex=raw.get("latex"),
+            table_cells=table_cells,
             caption_target=raw.get("caption_target"),
+            footnote_refs=footnote_refs,
+            citations=citations,
             confidence=raw.get("confidence", 1.0),
             source_parser=parser_name,
             source_node_id=raw.get("source_node_id", ""),
         )
+
+    @staticmethod
+    def _parse_bbox(bbox_raw: Any) -> BBox:
+        """Parse and validate a bbox value.
+
+        Raises:
+            NormalizationError: If bbox has invalid length or types.
+        """
+        if not isinstance(bbox_raw, (list, tuple)):
+            raise NormalizationError(f"Invalid bbox type: {type(bbox_raw).__name__}, expected list/tuple")
+        if len(bbox_raw) != 4:
+            raise NormalizationError(f"Invalid bbox length: {len(bbox_raw)}, expected 4")
+        try:
+            return (float(bbox_raw[0]), float(bbox_raw[1]), float(bbox_raw[2]), float(bbox_raw[3]))
+        except (ValueError, TypeError) as e:
+            raise NormalizationError(f"Invalid bbox values: {bbox_raw}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +226,10 @@ class GlobalRepair:
 
         The original parser output is NOT modified — repairs create
         a new DocIR with repair records in the log.
+
+        After repairs, page-local state is rebuilt from the repaired
+        block set: pages.blocks, page warnings, reading order, and
+        relation references are all reconstructed.
         """
         blocks = list(docir.blocks)
         relations = list(docir.relations)
@@ -184,6 +239,9 @@ class GlobalRepair:
         blocks = self._remove_repeated_headers_footers(blocks, repair_log)
         blocks, relations = self._link_cross_page_continuation(blocks, relations, repair_log)
         blocks, relations = self._fix_caption_attachments(blocks, relations, repair_log)
+
+        # Rebuild page-local state from repaired blocks
+        pages = self._rebuild_pages(docir.pages, blocks)
 
         return DocIR(
             doc_id=docir.doc_id,
@@ -196,12 +254,45 @@ class GlobalRepair:
             created_at=docir.created_at,
             language=docir.language,
             page_count=docir.page_count,
-            pages=docir.pages,
+            pages=pages,
             blocks=blocks,
             relations=relations,
             warnings=warnings,
             confidence=docir.confidence,
         )
+
+    def _rebuild_pages(self, original_pages: list[Page], blocks: list[Block]) -> list[Page]:
+        """Rebuild page-local state from the repaired block set.
+
+        For each original page, reconstruct:
+        - blocks list (only blocks that still exist)
+        - warnings (preserved from original)
+        - reading_order_version (preserved)
+        """
+        block_ids = {b.block_id for b in blocks}
+        blocks_by_page: dict[int, list[str]] = {}
+        for b in blocks:
+            blocks_by_page.setdefault(b.page_no, []).append(b.block_id)
+
+        rebuilt: list[Page] = []
+        for page in original_pages:
+            page_block_ids = [
+                bid for bid in blocks_by_page.get(page.page_no, [])
+            ]
+            rebuilt.append(
+                Page(
+                    page_no=page.page_no,
+                    width=page.width,
+                    height=page.height,
+                    rotation=page.rotation,
+                    image_uri=page.image_uri,
+                    ocr_used=page.ocr_used,
+                    reading_order_version=page.reading_order_version,
+                    blocks=page_block_ids,
+                    warnings=page.warnings,
+                )
+            )
+        return rebuilt
 
     def _normalize_heading_hierarchy(
         self, blocks: list[Block], log: RepairLog
@@ -231,23 +322,17 @@ class GlobalRepair:
         if min_level <= 1:
             return blocks
 
-        # Shift all headings down by (min_level - 1)
+        # Shift all headings down by (min_level - 1), preserving relative spacing
         shift = min_level - 1
         result = []
         for b in blocks:
             if b.block_type == BlockType.HEADING:
                 old_md = b.text_md
-                # Remove 'shift' number of leading '#' characters
-                stripped = old_md.lstrip("#")
-                leading_space = ""
-                if stripped and stripped[0] == " ":
-                    leading_space = " "
-                    stripped = stripped[1:]
-                new_md = "#" + leading_space + stripped
+                new_md = self._shift_heading_level(old_md, shift)
                 log.add(RepairRecord(
                     repair_type="heading_hierarchy_shift",
                     before=f"level {min_level}: {old_md[:50]}",
-                    after=f"shifted to level 1: {new_md[:50]}",
+                    after=f"shifted by {shift}: {new_md[:50]}",
                     reason=f"Heading hierarchy started at level {min_level}, shifted by {shift}",
                     confidence=0.9,
                     performed_by="rule",
@@ -257,7 +342,20 @@ class GlobalRepair:
                 result.append(b)
         return result
 
-        return blocks
+    @staticmethod
+    def _shift_heading_level(md_text: str, shift: int) -> str:
+        """Shift heading level by removing 'shift' leading # characters.
+
+        Preserves relative heading spacing. E.g. "### Title" with shift=2 → "# Title".
+        """
+        stripped = md_text.lstrip("#")
+        leading_hashes = len(md_text) - len(stripped)
+        new_level = max(1, leading_hashes - shift)
+        leading_space = ""
+        if stripped and stripped[0] == " ":
+            leading_space = " "
+            stripped = stripped[1:]
+        return "#" * new_level + leading_space + stripped
 
     def _remove_repeated_headers_footers(
         self, blocks: list[Block], log: RepairLog

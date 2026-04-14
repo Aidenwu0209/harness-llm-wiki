@@ -96,14 +96,19 @@ class TestConflictManagement:
                         evidence_anchors=[EvidenceAnchor(anchor_id="a2", source_id="s2", doc_id="d2", page_no=1, block_id="b2")],
                         supporting_sources=["s2"]),
         ]
-        conflict = mark_conflict(claims, description="Contradictory conclusions")
+        conflict, updated_claims = mark_conflict(claims, description="Contradictory conclusions")
         assert len(conflict.claim_ids) == 2
         assert "s1" in conflict.source_ids
         assert "s2" in conflict.source_ids
         assert conflict.resolved is False
+        # Verify claims updated to CONFLICTED status
+        assert all(c.status == ClaimStatus.CONFLICTED for c in updated_claims)
+        for c in updated_claims:
+            assert "s1" in c.conflicting_sources
+            assert "s2" in c.conflicting_sources
 
     def test_resolve_conflict(self) -> None:
-        conflict = mark_conflict([
+        conflict, _ = mark_conflict([
             ClaimRecord(claim_id="c1", statement="X", status=ClaimStatus.SUPPORTED,
                         evidence_anchors=[EvidenceAnchor(anchor_id="a1", source_id="s1", doc_id="d1", page_no=1, block_id="b1")],
                         supporting_sources=["s1"]),

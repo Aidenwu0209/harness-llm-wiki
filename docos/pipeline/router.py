@@ -176,32 +176,41 @@ class ParserRouter:
     def _score_route(self, route: ParserRoute, signals: DocumentSignals) -> int:
         """Score how well a route matches the given signals.
 
-        Each matching criterion adds 1 point. More specific routes
-        accumulate higher scores.
+        Hard filters (file type) exclude a route entirely.
+        Soft scores accumulate points for matching criteria.
         """
-        score = 0
+        # Hard filter: file type must match if specified
+        if route.file_types and signals.file_type not in route.file_types:
+            return 0
 
-        if route.file_types and signals.file_type in route.file_types:
-            score += 1
-        elif route.file_types and signals.file_type not in route.file_types:
-            return 0  # Hard filter: file type must match if specified
+        soft_score = 0
 
         if route.requires_ocr is not None and signals.needs_ocr == route.requires_ocr:
-            score += 1
+            soft_score += 2  # OCR is a strong signal
 
         if route.table_formula_heavy is not None and signals.is_table_heavy == route.table_formula_heavy:
-            score += 1
+            soft_score += 1
 
         if route.image_heavy is not None and signals.is_image_heavy == route.image_heavy:
-            score += 1
+            soft_score += 1
 
         if route.dual_column is not None and signals.is_dual_column == route.dual_column:
-            score += 1
+            soft_score += 1
 
         if route.max_pages is not None and signals.page_count <= route.max_pages:
-            score += 1
+            soft_score += 1
 
-        return score
+        # Bonus for matching file type (when specified)
+        if route.file_types and signals.file_type in route.file_types:
+            soft_score += 1
+
+        # Bonus signals: language, scanned state, known failures
+        if signals.language == "en":
+            soft_score += 0  # Neutral
+        if signals.has_known_failures and route.expected_risks:
+            soft_score += 1  # Route anticipates risks
+
+        return soft_score
 
     def _build_decision(self, route: ParserRoute, signals: DocumentSignals) -> RouteDecision:
         """Build a RouteDecision from a matched route and signals."""

@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from docos.debug_store import DebugAssetStore
 from docos.models.docir import DocIR
 from docos.pipeline.parser import DebugConfig, ParseResult, ParserBackend, ParserRegistry
 from docos.pipeline.router import RouteDecision
@@ -52,6 +53,14 @@ class PipelineRunResult:
     # Debug
     debug_assets: dict[str, Path] = field(default_factory=dict)
 
+    # Asset paths written to disk (for run manifest linking)
+    parse_log_path: str | None = None
+    debug_assets_dir: str | None = None
+
+    # Failed attempt tracking
+    failed_attempt_paths: list[str] = field(default_factory=list)
+    parser_unavailable: list[str] = field(default_factory=list)
+
     @property
     def review_policy_override(self) -> str | None:
         """Fallback results should use stricter review policy."""
@@ -79,9 +88,11 @@ class PipelineOrchestrator:
         self,
         parser_registry: ParserRegistry,
         debug_dir: Path | None = None,
+        debug_store: DebugAssetStore | None = None,
     ) -> None:
         self._registry = parser_registry
         self._debug_dir = debug_dir
+        self._debug_store = debug_store
 
     def execute(
         self,
@@ -116,6 +127,11 @@ class PipelineOrchestrator:
 
             if backend is None:
                 logger.warning("Parser '%s' not found in registry, skipping", parser_name)
+                result.parser_unavailable.append(parser_name)
+                # Persist unavailable status
+                if self._debug_store is not None:
+                    unavailable_log = self._persist_unavailable(parser_name, run_id, source_id)
+                    result.failed_attempt_paths.append(unavailable_log)
                 if is_primary:
                     result.primary_succeeded = False
                     result.failure_reason = f"Primary parser '{parser_name}' not available"
@@ -139,8 +155,8 @@ class PipelineOrchestrator:
                     result.fallback_parser = parser_name
                     result.primary_succeeded = False
 
-                # Export debug assets
-                self._export_debug(backend, attempt, run_id, source_id)
+                # Persist debug assets via DebugAssetStore
+                self._persist_success(result, backend, attempt, run_id, source_id)
 
                 break
             else:
@@ -151,6 +167,10 @@ class PipelineOrchestrator:
                         "Primary parser '%s' failed: %s",
                         parser_name, attempt.error,
                     )
+                # Persist failed attempt log
+                if self._debug_store is not None:
+                    fail_log = self._persist_failure(parser_name, attempt, run_id, source_id)
+                    result.failed_attempt_paths.append(fail_log)
 
         result.finished_at = datetime.now()
         result.total_elapsed_seconds = sum(a.elapsed_seconds for a in result.attempts)
@@ -194,6 +214,79 @@ class PipelineOrchestrator:
                 error=str(e),
                 elapsed_seconds=elapsed,
             )
+
+    def _persist_success(
+        self,
+        run_result: PipelineRunResult,
+        backend: ParserBackend,
+        parse_result: ParseResult,
+        run_id: str,
+        source_id: str,
+    ) -> None:
+        """Persist debug assets and parse log for a successful attempt."""
+        if self._debug_store is not None:
+            # Use DebugAssetStore for structured persistence
+            assets = self._debug_store.persist_run_result(
+                source_id=source_id,
+                run_id=run_id,
+                parser_name=backend.name,
+                result=parse_result,
+            )
+            for name, path in assets.items():
+                parse_result.debug_assets[name] = path
+                run_result.debug_assets[name] = path
+
+            # Record paths for run manifest linking
+            run_dir = self._debug_store._run_dir(source_id, run_id, backend.name)
+            parse_log_path = run_dir / "parse_log.json"
+            if parse_log_path.exists():
+                run_result.parse_log_path = str(parse_log_path)
+                run_result.debug_assets_dir = str(run_dir)
+        else:
+            # Fallback to simple debug export
+            self._export_debug(backend, parse_result, run_id, source_id)
+
+    def _persist_failure(
+        self,
+        parser_name: str,
+        parse_result: ParseResult,
+        run_id: str,
+        source_id: str,
+    ) -> str:
+        """Persist a failed parser attempt log. Returns path to log file."""
+        assert self._debug_store is not None  # caller guarantees non-None
+        log_path = self._debug_store.persist_parse_log(
+            source_id=source_id,
+            run_id=run_id,
+            parser_name=parser_name,
+            result=parse_result,
+        )
+        logger.info("Persisted failure log for %s at %s", parser_name, log_path)
+        return str(log_path)
+
+    def _persist_unavailable(
+        self,
+        parser_name: str,
+        run_id: str,
+        source_id: str,
+    ) -> str:
+        """Persist a parser-unavailable status. Returns path to log file."""
+        assert self._debug_store is not None  # caller guarantees non-None
+        # Create a synthetic ParseResult for the unavailable state
+        unavailable_result = ParseResult(
+            parser_name=parser_name,
+            parser_version="unavailable",
+            success=False,
+            error=f"Parser '{parser_name}' is not registered in the parser registry",
+        )
+        log_path = self._debug_store.persist_parse_log(
+            source_id=source_id,
+            run_id=run_id,
+            parser_name=parser_name,
+            result=unavailable_result,
+        )
+        logger.info("Persisted unavailable log for %s at %s", parser_name, log_path)
+        return str(log_path)
 
     def _export_debug(
         self,

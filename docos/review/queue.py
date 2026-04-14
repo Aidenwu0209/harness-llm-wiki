@@ -114,6 +114,7 @@ class ReviewQueue:
         (base_dir / "queue").mkdir(parents=True, exist_ok=True)
         (base_dir / "approved").mkdir(parents=True, exist_ok=True)
         (base_dir / "rejected").mkdir(parents=True, exist_ok=True)
+        self._load_all()
 
     def add(self, item: ReviewItem) -> None:
         """Add an item to the review queue."""
@@ -153,3 +154,16 @@ class ReviewQueue:
     def _persist(self, item: ReviewItem, subdir: str) -> None:
         path = self._base / subdir / f"{item.review_id}.json"
         path.write_text(item.model_dump_json(indent=2), encoding="utf-8")
+
+    def _load_all(self) -> None:
+        """Load all existing review items from disk on initialization."""
+        for subdir in ("queue", "approved", "rejected"):
+            dir_path = self._base / subdir
+            if not dir_path.exists():
+                continue
+            for path in dir_path.glob("*.json"):
+                try:
+                    item = ReviewItem.model_validate_json(path.read_text(encoding="utf-8"))
+                    self._items[item.review_id] = item
+                except Exception:
+                    pass  # Skip corrupted files

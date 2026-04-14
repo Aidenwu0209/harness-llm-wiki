@@ -9,10 +9,18 @@ These operations maintain knowledge integrity over time:
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
+if TYPE_CHECKING:
+    from docos.review.queue import ReviewQueue
+
 from docos.models.knowledge import ClaimRecord, ClaimStatus, EntityRecord
+
+
+# Re-export Literal for DedupCandidate
+__all__ = ["ConflictMarker", "DedupCandidate", "DeprecationRecord"]
 
 
 # ---------------------------------------------------------------------------
@@ -35,19 +43,38 @@ class ConflictMarker(BaseModel):
         self.resolution_note = note
 
 
-def mark_conflict(claims: list[ClaimRecord], description: str = "") -> ConflictMarker:
+def mark_conflict(
+    claims: list[ClaimRecord],
+    description: str = "",
+) -> tuple[ConflictMarker, list[ClaimRecord]]:
     """Mark a set of claims as conflicting.
 
     Both sides of evidence are preserved — neither is silently overwritten.
+    Updates each claim's status to CONFLICTED and records conflicting sources.
+
+    Returns:
+        Tuple of (ConflictMarker, updated claims with CONFLICTED status).
     """
     from docos.knowledge.extractor import _make_id
+    all_source_ids = list({s for c in claims for s in c.supporting_sources})
     conflict = ConflictMarker(
         conflict_id=_make_id("conflict"),
         claim_ids=[c.claim_id for c in claims],
-        source_ids=list({s for c in claims for s in c.supporting_sources}),
+        source_ids=all_source_ids,
         description=description,
     )
-    return conflict
+
+    # Update each claim to CONFLICTED with full source references
+    updated_claims: list[ClaimRecord] = []
+    for claim in claims:
+        updated = claim.model_copy(update={
+            "status": ClaimStatus.CONFLICTED,
+            "conflicting_sources": all_source_ids,
+            "updated_at": datetime.now(),
+        })
+        updated_claims.append(updated)
+
+    return conflict, updated_claims
 
 
 # ---------------------------------------------------------------------------
@@ -178,4 +205,51 @@ def deprecate_claim(
 
 
 # Need to import Literal for DedupCandidate
-from typing import Literal
+def submit_dedup_to_review(
+    candidate: DedupCandidate,
+    review_queue: "ReviewQueue",
+) -> str:
+    """Submit a dedup candidate to the review queue.
+
+    Returns:
+        The review_id of the created review item.
+    """
+    from docos.review.queue import ReviewItem, ReviewItemType
+
+    item = ReviewItem(
+        review_id=candidate.candidate_id,
+        item_type=ReviewItemType.ENTITY_DEDUP,
+        target_object_id=candidate.entity_a_id,
+        reason=candidate.reason,
+        dedup_candidates=[candidate.entity_a_id, candidate.entity_b_id],
+    )
+    review_queue.add(item)
+    return item.review_id
+
+
+def approve_dedup_review(
+    review_id: str,
+    reviewer: str,
+    reason: str,
+    review_queue: "ReviewQueue",
+) -> DedupCandidate | None:
+    """Approve a dedup review item and return the updated candidate.
+
+    Returns:
+        The updated DedupCandidate with merged status, or None if not found.
+    """
+    item = review_queue.get(review_id)
+    if item is None:
+        return None
+    review_queue.resolve(review_id, action="approve", reviewer=reviewer, reason=reason)
+    candidate = DedupCandidate(
+        candidate_id=review_id,
+        entity_a_id=item.dedup_candidates[0] if len(item.dedup_candidates) > 0 else "",
+        entity_b_id=item.dedup_candidates[1] if len(item.dedup_candidates) > 1 else "",
+        similarity_score=item.risk_score,
+        reason=item.reason,
+        status="merged",
+        reviewed_by=reviewer,
+        reviewed_at=datetime.now(),
+    )
+    return candidate

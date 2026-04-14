@@ -63,11 +63,14 @@ class WikiLinter:
         entities: list[EntityRecord],
         docir: DocIR | None = None,
         patch: Patch | None = None,
+        page_bodies: dict[str, str] | None = None,
     ) -> list[LintFinding]:
         findings: list[LintFinding] = []
         findings.extend(self._lint_structure(pages))
         findings.extend(self._lint_knowledge(claims, entities))
         findings.extend(self._lint_operational(pages, patch))
+        if page_bodies:
+            findings.extend(self._lint_body(pages, page_bodies, claims, docir))
         return findings
 
     # ------------------------------------------------------------------
@@ -167,6 +170,57 @@ class WikiLinter:
 
         return findings
 
+    def _lint_body(
+        self,
+        pages: list[Frontmatter],
+        page_bodies: dict[str, str],
+        claims: list[ClaimRecord],
+        docir: DocIR | None = None,
+    ) -> list[LintFinding]:
+        """Lint page body content: wikilinks, anchors, schema-body consistency."""
+        import re
+        findings: list[LintFinding] = []
+
+        page_ids = {p.id for p in pages}
+        claim_ids = {c.claim_id for c in claims}
+        block_ids = {b.block_id for b in docir.blocks} if docir else set()
+
+        for page in pages:
+            body = page_bodies.get(page.id, "")
+            if not body:
+                continue
+
+            # Broken wikilinks: [[target]] where target not in page_ids
+            wikilinks = re.findall(r"\[\[([^\]]+)\]\]", body)
+            for link in wikilinks:
+                link_id = link.split("|")[0].strip().split(".")[-1]
+                if link_id and link_id not in page_ids and link_id not in claim_ids:
+                    findings.append(LintFinding(
+                        code="BROKEN_WIKILINK",
+                        message=f"Broken wikilink [[{link}]] on page {page.id}",
+                        severity=LintSeverity.P1, page_id=page.id,
+                    ))
+
+            # Missing or invalid anchors: [[anchor#...]] reference to non-existent blocks
+            anchor_refs = re.findall(r"#(blk_\w+)", body)
+            for ref in anchor_refs:
+                if block_ids and ref not in block_ids:
+                    findings.append(LintFinding(
+                        code="INVALID_ANCHOR",
+                        message=f"Invalid anchor #{ref} on page {page.id}",
+                        severity=LintSeverity.P1, page_id=page.id,
+                    ))
+
+            # Schema-body mismatch: page claims to have source_docs but body is empty
+            if page.source_docs and len(body) < 50:
+                findings.append(LintFinding(
+                    code="SCHEMA_BODY_MISMATCH",
+                    message=f"Page {page.id} has source_docs but empty body",
+                    severity=LintSeverity.P2, page_id=page.id,
+                ))
+
+        return findings
+
     # ------------------------------------------------------------------
     # Operational lint
     # ------------------------------------------------------------------
@@ -220,25 +274,39 @@ class ReleaseGate:
     ) -> tuple[bool, list[str]]:
         """Check if auto-merge is allowed.
 
+        Reads blocking conditions from config if available, otherwise
+        uses sensible defaults.
+
         Returns:
             (can_merge, list of blocking reasons)
         """
         reasons: list[str] = []
 
+        # Read config thresholds
+        block_p0 = True
+        block_p1 = True
+        block_missing_harness = True
+        if self._config is not None:
+            gates = getattr(self._config, "release_gates", None)
+            if gates is not None:
+                block_p0 = getattr(gates, "block_on_p0_lint", True)
+                block_p1 = getattr(gates, "block_on_p1_lint", True)
+                block_missing_harness = getattr(gates, "block_on_missing_harness", True)
+
         # P0 lint blocks
         p0 = [f for f in findings if f.severity == LintSeverity.P0]
-        if p0:
+        if p0 and block_p0:
             reasons.append(f"P0 lint exists ({len(p0)} findings)")
 
         # P1 lint blocks
         p1 = [f for f in findings if f.severity == LintSeverity.P1]
-        if p1:
+        if p1 and block_p1:
             reasons.append(f"P1 lint exists ({len(p1)} findings)")
 
         # Harness not run
-        if harness_passed is None:
+        if harness_passed is None and block_missing_harness:
             reasons.append("Harness has not run")
-        elif not harness_passed:
+        elif harness_passed is False:
             reasons.append("Harness failed")
 
         # Regression exceeded

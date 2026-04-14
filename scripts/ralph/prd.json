@@ -1,17 +1,18 @@
 {
-  "project": "Document Parsing Knowledge OS",
-  "branchName": "ralph/document-parsing-knowledge-os-optimization",
-  "description": "Upgrade the document parsing wiki into an evidence-first, schema-first, patch-based, harness-gated knowledge compiler.",
+  "project": "DocOS v1 Alpha Optimization",
+  "branchName": "ralph/docos-v1-alpha-optimization",
+  "description": "Turn the current DocOS skeleton into a runnable PDF-first alpha with persisted artifacts, deterministic IDs, patch-driven wiki updates, a recoverable review flow, and regression coverage.",
   "userStories": [
     {
       "id": "US-001",
-      "title": "Define the versioned Canonical DocIR schema",
-      "description": "As a knowledge engineer, I want a versioned Canonical DocIR schema so that every parser output can normalize into one canonical contract.",
+      "title": "Create a real run manifest during ingest",
+      "description": "As a DocOS operator, I want `docos ingest <file> --run` to create a real run record so that every downstream artifact can be traced to a stable `run_id`.",
       "acceptanceCriteria": [
-        "Define top-level DocIR fields including doc_id, source_id, parser, parser_version, schema_version, pages, blocks, relations, warnings, and confidence",
-        "Define required Page fields including page_no, width, height, rotation, image_uri or equivalent, ocr_used, reading_order_version, blocks, and warnings",
-        "Define required Block fields including block_id, page_no, block_type, reading_order, bbox, parent_id, children_ids, text fields, citations, confidence, source_parser, and source_node_id",
-        "Define supported relation types including caption_of, footnote_of, continued_from, continued_to, references, mentioned_in, same_table_as, same_section_as, duplicate_of, and derived_from",
+        "`docos ingest <file> --run` prints JSON containing `source_id`, `run_id`, `status`, and `artifactRoot`",
+        "A run manifest file is written for the new `run_id` and includes ordered pipeline stages with initial statuses",
+        "The run manifest stores the linked `source_id` and source file path",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 1,
@@ -22,12 +23,14 @@
     },
     {
       "id": "US-002",
-      "title": "Define the versioned patch and page schemas",
-      "description": "As a platform engineer, I want explicit patch and page schemas so that wiki changes, page metadata, and review decisions are machine-checkable.",
+      "title": "Persist and reload run manifests",
+      "description": "As a maintainer, I want the run store to reload manifests after restart so that `run_id` lookup is recoverable across process restarts.",
       "acceptanceCriteria": [
-        "Define a patch schema with patch_id, run_id, source_id, generated_at, changes, blast_radius, risk_score, review_required, and merge_status",
-        "Define a page schema or template contract for source, entity, concept, failure, comparison, and decision pages",
-        "Require frontmatter fields such as id, type, title, schema_version, created_at, updated_at, source_docs, related_claims, and review_status where applicable",
+        "The run store can load a previously written manifest by `run_id` after a fresh process start",
+        "A missing `run_id` returns a structured not-found error instead of a placeholder string",
+        "Run manifest persistence is covered by automated tests",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 2,
@@ -38,12 +41,14 @@
     },
     {
       "id": "US-003",
-      "title": "Externalize router, threshold, and review policy config",
-      "description": "As an operator, I want routing, release thresholds, and review policies in config files so that system behavior does not depend on hidden prompt logic.",
+      "title": "Persist DocIR artifacts in an IR store",
+      "description": "As a pipeline maintainer, I want normalized DocIR output persisted to disk so that DocIR is never an in-memory-only artifact.",
       "acceptanceCriteria": [
-        "Create external config contracts for parser routes, risk thresholds, release gates, and review policies",
-        "Support environment-specific values for local, dev, staging, and prod",
-        "Document how route selection and release decisions read from config instead of hardcoded prompt branches",
+        "A normalized DocIR artifact is written under `ir_store` with `run_id` and `source_id` metadata",
+        "The IR store can retrieve the saved DocIR for a known `run_id`",
+        "The run manifest links to the persisted DocIR artifact path",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 3,
@@ -54,12 +59,14 @@
     },
     {
       "id": "US-004",
-      "title": "Create the source registry record contract",
-      "description": "As the system, I want a stable source registry record so that each uploaded document can be tracked across runs, parser versions, and wiki outputs.",
+      "title": "Persist knowledge artifacts in a knowledge store",
+      "description": "As a knowledge maintainer, I want extracted entities, claims, and relations written to disk so that the knowledge layer can be queried and audited later.",
       "acceptanceCriteria": [
-        "Define required source record fields including source_id, source_hash, file_name, mime_type, byte_size, created_at, ingested_at, ingest_count, origin, tags, owner, status, latest_run_id, and latest_docir_id",
-        "Ensure source_id is stable and unique for each document",
-        "Define source-to-page and source-to-review linkage fields or indexes",
+        "Entity, claim, and relation outputs are written under `knowledge_store` for a completed run",
+        "The knowledge store can reload persisted knowledge artifacts by `run_id`",
+        "The run manifest links to the saved knowledge artifact paths",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 4,
@@ -70,12 +77,14 @@
     },
     {
       "id": "US-005",
-      "title": "Add immutable raw source storage",
-      "description": "As a reviewer, I want immutable raw source storage so that no LLM or repair step can overwrite the original evidence.",
+      "title": "Persist patch, report, and wiki state stores",
+      "description": "As a system maintainer, I want patch, report, and wiki state artifacts persisted so that the review, reporting, and rollback flows have durable state.",
       "acceptanceCriteria": [
-        "Persist each original source into a read-only raw source location",
-        "Store metadata that links the immutable source copy back to the source registry record",
-        "Prevent write paths from overwriting the immutable original file",
+        "`patch_store`, `report_store`, and `wiki_store` are created and used for completed runs",
+        "Each persisted patch, report, and wiki state artifact includes a stable reference to `run_id` or `patch_id`",
+        "Stored patch, report, and wiki state artifacts can be reloaded after a fresh process start",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 5,
@@ -86,12 +95,14 @@
     },
     {
       "id": "US-006",
-      "title": "Add hash-based duplicate detection and ingest history",
-      "description": "As the system, I want duplicate detection and ingest history so that repeated imports reuse source identity and remain auditable.",
+      "title": "Extract deterministic document signals from raw sources",
+      "description": "As a router maintainer, I want signal extraction to inspect the real source document so that route decisions are based on document facts instead of defaults.",
       "acceptanceCriteria": [
-        "Detect duplicate documents by hash before creating a new source identity",
-        "Increment ingest history for repeated imports of the same source",
-        "Record the parser version and run metadata for each ingest attempt",
+        "Signal extraction returns MIME type, extension, page count, OCR need, scanned flag, dual-column flag, table-heavy flag, formula-heavy flag, image-heavy flag, language, target mode, and known-failure hints for a PDF source",
+        "Running signal extraction twice on the same unchanged source returns the same signal values",
+        "The extracted signals can be serialized and stored in a route log entry",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 6,
@@ -102,12 +113,14 @@
     },
     {
       "id": "US-007",
-      "title": "Define the parser backend interface",
-      "description": "As a parser engineer, I want a common parser backend interface so that multiple parser implementations can plug into the same pipeline.",
+      "title": "Wire `docos route` to real sources and signal dumps",
+      "description": "As a DocOS operator, I want the route command to load the real source record and extracted signals so that the route decision is explainable and auditable.",
       "acceptanceCriteria": [
-        "Define parser backend methods for parse(file), normalize(raw_result), export_debug_assets(...), healthcheck(), and capabilities()",
-        "Document required capability metadata for route selection",
-        "Ensure the interface supports both primary and fallback parser backends",
+        "`docos route <source_id>` loads the stored source record instead of constructing a fake source object",
+        "The route command output includes the selected route, primary parser, fallback parsers, and extracted signal values",
+        "A route log entry is written to disk for each route decision",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 7,
@@ -118,12 +131,14 @@
     },
     {
       "id": "US-008",
-      "title": "Implement route decision output and reason logging",
-      "description": "As a parser engineer, I want route decisions to be explicit and logged so that route selection is explainable and debuggable.",
+      "title": "Add a primary PDF parser adapter",
+      "description": "As a pipeline maintainer, I want a concrete primary PDF parser adapter so that the parse stage can run on real fixtures without hitting abstract placeholders.",
       "acceptanceCriteria": [
-        "Route selection outputs selected_route, primary_parser, fallback_parsers, expected_risks, post_parse_repairs, and review_policy",
-        "Route logging records the document signals used to choose the route",
-        "Route selection reads from external config rather than hardcoded prompt branches",
+        "The parser registry can enumerate a concrete primary PDF parser",
+        "The primary parser can parse a text-heavy PDF fixture and return structured output without raising `NotImplementedError`",
+        "Primary parser failures produce a structured parser error object with parser name and reason",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 8,
@@ -134,12 +149,14 @@
     },
     {
       "id": "US-009",
-      "title": "Implement fallback parser execution policy",
-      "description": "As the system, I want fallback parser behavior to be automatic and explicit so that parser failures do not silently degrade data quality.",
+      "title": "Add a fallback PDF parser and registry failover wiring",
+      "description": "As a DocOS operator, I want a fallback parser chain so that a failed primary parse can still continue with a secondary parser.",
       "acceptanceCriteria": [
-        "When the primary parser fails, automatically execute a configured fallback parser",
-        "Record the failure reason, the fallback_used flag, and the selected fallback parser",
-        "Mark fallback runs for stricter review policy",
+        "The parser registry contains at least one fallback parser entry for PDF routes",
+        "When the primary parser raises a structured failure, the orchestrator invokes the configured fallback parser",
+        "The run result records parser order and the parser that produced the final output",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 9,
@@ -150,12 +167,14 @@
     },
     {
       "id": "US-010",
-      "title": "Persist parser raw outputs and debug assets",
-      "description": "As a parser engineer, I want each run to keep its raw parser outputs and debug assets so that parsing issues can be reproduced and reviewed.",
+      "title": "Persist successful parser attempts and debug assets",
+      "description": "As a maintainer, I want successful parser attempts to write logs and debug assets so that parse output can be inspected after the run completes.",
       "acceptanceCriteria": [
-        "Persist raw parser output, parser logs, rendered page images, and debug screenshots or overlays per run",
-        "Link persisted debug assets to the source and run records",
-        "Ensure debug assets remain available after normalization and repair steps",
+        "A successful parser attempt writes a parse log with parser name, timestamps, and final status",
+        "Successful parse debug assets are written under a `source_id/run_id/parser` path",
+        "The run manifest links to the successful attempt log and debug asset paths",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 10,
@@ -166,12 +185,14 @@
     },
     {
       "id": "US-011",
-      "title": "Normalize page-local parser output into DocIR pages and blocks",
-      "description": "As the system, I want page-local parser output normalized into DocIR pages and blocks so that downstream steps receive one consistent structure.",
+      "title": "Persist failed parser attempts and unavailable parser states",
+      "description": "As a maintainer, I want failed attempts to keep their logs and debug data so that fallback behavior can be diagnosed instead of disappearing.",
       "acceptanceCriteria": [
-        "Convert parser output into DocIR pages, blocks, and initial relations",
-        "Preserve reading_order, bbox, text content, and block hierarchy",
-        "Represent unknown content as unknown blocks instead of dropping it",
+        "A failed primary parser attempt writes a parse log with the parser name and failure reason",
+        "Fallback attempts retain references to the failed primary attempt artifacts",
+        "A parser-unavailable condition is recorded with its own status instead of being merged into a generic failure",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 11,
@@ -182,12 +203,14 @@
     },
     {
       "id": "US-012",
-      "title": "Add document-global repair for cross-page structure",
-      "description": "As the system, I want document-global repair so that cross-page tables, headings, references, and repeated layout noise are normalized after page-local parsing.",
+      "title": "Render `docos report` from persisted run data",
+      "description": "As a DocOS operator, I want the report command to summarize a real run so that I can inspect outputs and failures without opening raw files manually.",
       "acceptanceCriteria": [
-        "Repair heading hierarchy, repeated header or footer noise, cross-page tables, cross-page notes, and caption attachment where applicable",
-        "Preserve continuity relations for cross-page objects",
-        "Write the repaired result back as canonical DocIR without deleting the original parser output",
+        "`docos report <run_id>` shows run status, parsers tried, artifact paths, lint status, harness status, and review status",
+        "Report output uses persisted run data instead of placeholder text",
+        "Missing artifacts are labeled as not-generated-yet instead of returning a generic placeholder string",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 12,
@@ -198,12 +221,14 @@
     },
     {
       "id": "US-013",
-      "title": "Record structured repair logs",
-      "description": "As an engineer, I want every repair to have a before-and-after record so that normalization is auditable and debuggable.",
+      "title": "Add DocIR page, block, and relation invariants",
+      "description": "As a normalizer maintainer, I want DocIR validation to reject invalid page and block references before extraction and compile so that downstream stages only consume consistent structure.",
       "acceptanceCriteria": [
-        "Each repair record stores repair_id, repair_type, before, after, reason, confidence, performed_by, and timestamp",
-        "Repair logs link back to the affected source and run",
-        "Repair logs are preserved alongside the canonical DocIR result",
+        "DocIR validation rejects duplicate `block_id` values, invalid page-block references, duplicate page-local reading order values, invalid relation block references, and page-count mismatches",
+        "Validation errors include the failing `page_no` or `block_id` in the error message",
+        "A valid normalized DocIR fixture passes the new invariant checks",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 13,
@@ -214,12 +239,14 @@
     },
     {
       "id": "US-014",
-      "title": "Extract entities from canonical DocIR",
-      "description": "As a knowledge engineer, I want entities extracted from canonical DocIR so that the knowledge layer is built on structure instead of free-form summary text.",
+      "title": "Preserve structured block fields during page-local normalization",
+      "description": "As a data maintainer, I want table, citation, and footnote fields preserved during normalization so that extraction does not lose parser output.",
       "acceptanceCriteria": [
-        "Extract entity records from DocIR using a defined entity type set",
-        "Store enough metadata to link each entity back to source evidence",
-        "Preserve candidate aliases without implicitly merging entities",
+        "Normalization maps `table_cells`, `footnote_refs`, and `citations` into canonical blocks or extension metadata instead of dropping them",
+        "Unsupported parser-specific structure fields are retained in metadata for later consumers",
+        "Normalization rejects invalid bbox lengths or bbox types with a structured error",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 14,
@@ -230,12 +257,14 @@
     },
     {
       "id": "US-015",
-      "title": "Extract claims and relations from canonical DocIR",
-      "description": "As a knowledge engineer, I want claims and relations extracted from canonical DocIR so that the knowledge graph is explicit and maintainable.",
+      "title": "Rebuild page state after global repair",
+      "description": "As a normalizer maintainer, I want global repair to rebuild page-local state so that repaired DocIR remains internally consistent.",
       "acceptanceCriteria": [
-        "Extract structured claims and relations from normalized document content",
-        "Persist claim status fields needed for supported, inferred, and conflicted claims",
-        "Link claims to source pages or blocks before wiki compilation",
+        "After global repair, `pages.blocks`, page-level warnings, page reading order, and relation references are rebuilt from the repaired block set",
+        "Removed blocks do not remain in any `Page.blocks` list after repair",
+        "A repaired DocIR fixture passes the full invariant validator",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 15,
@@ -246,12 +275,14 @@
     },
     {
       "id": "US-016",
-      "title": "Enforce evidence and inference validation rules",
-      "description": "As a reviewer, I want evidence and inference rules enforced so that claims cannot be presented as authoritative without traceable support.",
+      "title": "Fix heading hierarchy shift logic",
+      "description": "As a normalizer maintainer, I want heading repair to preserve relative heading levels so that section structure is not flattened.",
       "acceptanceCriteria": [
-        "Require supported claims to include at least one evidence anchor",
-        "Require inferred claims to include an inference note",
-        "Require conflicted claims to reference the conflicting source set",
+        "Heading normalization applies the computed shift to each heading level instead of flattening every heading to a single `#`",
+        "A fixture containing headings that start below level 1 keeps the same relative spacing after normalization",
+        "The unreachable return path in heading normalization is removed",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 16,
@@ -262,12 +293,14 @@
     },
     {
       "id": "US-017",
-      "title": "Compile source pages from DocIR and extracted knowledge",
-      "description": "As an end user, I want a source page for each document so that I can inspect the document summary, structure, and evidence links from one entry point.",
+      "title": "Add deterministic IDs for entities and claims",
+      "description": "As a knowledge maintainer, I want entity and claim IDs derived from stable content inputs so that unchanged re-ingests do not generate noisy diffs.",
       "acceptanceCriteria": [
-        "Generate one source page per source with required frontmatter",
-        "Include source metadata, structural summary, and links to evidence-backed claims or related entities",
-        "Generate stable wiki links for the source page output",
+        "Entity IDs are derived from stable normalized inputs instead of random UUIDs",
+        "Claim IDs are derived from stable normalized inputs instead of random UUIDs",
+        "Running extraction twice on the same unchanged source produces identical entity and claim IDs",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 17,
@@ -278,12 +311,14 @@
     },
     {
       "id": "US-018",
-      "title": "Compile entity pages incrementally",
-      "description": "As an end user, I want entity pages to update incrementally so that the knowledge base evolves without full rewrites.",
+      "title": "Add deterministic IDs for relations and evidence anchors",
+      "description": "As a knowledge maintainer, I want relation and anchor IDs derived from stable evidence inputs so that relation diffs remain tied to real content changes.",
       "acceptanceCriteria": [
-        "Generate new entity pages when new entities appear",
-        "Update existing entity pages through patch proposals rather than direct overwrite",
-        "Preserve aliases, related claims, and source_docs metadata on entity pages",
+        "Relation IDs are derived from stable source, subject, object, and semantic-type inputs instead of random UUIDs",
+        "Evidence anchor IDs are derived from stable source and block-local evidence inputs instead of random UUIDs",
+        "Running extraction twice on the same unchanged source produces identical relation and anchor IDs",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 18,
@@ -294,12 +329,14 @@
     },
     {
       "id": "US-019",
-      "title": "Compile concept pages incrementally",
-      "description": "As an end user, I want concept pages to update incrementally so that shared concepts can absorb new evidence without losing prior context.",
+      "title": "Expand evidence anchors for source drilldown",
+      "description": "As a reviewer, I want evidence anchors to carry enough location data to jump back to the source block and quote span during review.",
       "acceptanceCriteria": [
-        "Generate concept pages from extracted claims and relations",
-        "Update concept pages through patch proposals rather than direct overwrite",
-        "Preserve frontmatter, source_docs, related_claims, and review_status metadata",
+        "Evidence anchors include bbox data when available, character offsets when available, and a render URI or equivalent source drilldown reference",
+        "A claim can reference its anchor and recover the source page and block identity from persisted data",
+        "Anchor serialization tests cover multilingual text and missing optional fields without breaking validation",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 19,
@@ -310,12 +347,14 @@
     },
     {
       "id": "US-020",
-      "title": "Compile failure, comparison, and decision pages",
-      "description": "As a team, I want failure, parser comparison, and decision pages so that hard cases and operational decisions become first-class knowledge objects.",
+      "title": "Fix section boundaries and cross-page extraction",
+      "description": "As a knowledge maintainer, I want extraction to stop at the next heading and handle cross-page continuations so that claims do not leak across unrelated sections.",
       "acceptanceCriteria": [
-        "Generate or update failure pages for recurring parse failures",
-        "Generate parser comparison pages that summarize fidelity, structure, and cost differences",
-        "Generate decision pages or equivalent records for important review outcomes or operating decisions",
+        "Section-based claim extraction stops when the next heading begins instead of bleeding into the next section",
+        "A cross-page section fixture can still produce claims from the continued section body",
+        "Table or figure evidence that continues across a page boundary can be attached to at least one extracted claim",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 20,
@@ -326,12 +365,14 @@
     },
     {
       "id": "US-021",
-      "title": "Generate structured wiki patch artifacts",
-      "description": "As the system, I want wiki changes emitted as structured patches so that changes can be linted, reviewed, approved, and rolled back safely.",
+      "title": "Fix conflict and deprecate behavior in knowledge ops",
+      "description": "As a knowledge maintainer, I want conflict and deprecate helpers to update stored claim state correctly so that the knowledge graph reflects review decisions.",
       "acceptanceCriteria": [
-        "Emit create_page and update_page operations in a structured patch artifact",
-        "Record the patch target pages and change summary for each generated patch",
-        "Do not write final wiki output directly without a patch artifact",
+        "`mark_conflict()` updates claim status and conflicting source references in stored claim data",
+        "`deprecate_claim()` preserves existing claim fields, including `object_value`, while updating deprecation status",
+        "Knowledge ops tests assert the updated stored claim payloads after each operation",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 21,
@@ -342,12 +383,14 @@
     },
     {
       "id": "US-022",
-      "title": "Compute patch risk score and blast radius",
-      "description": "As a reviewer, I want each patch scored for risk and blast radius so that large or risky changes automatically receive more scrutiny.",
+      "title": "Connect dedup approvals to review queue and graph updates",
+      "description": "As a reviewer, I want entity dedup candidates to enter the review queue and update the entity graph when approved so that dedup is a real workflow instead of a loose helper.",
       "acceptanceCriteria": [
-        "Compute a risk score for each patch",
-        "Compute blast radius metrics including affected pages, claims, and links",
-        "Mark high-risk or high-blast-radius patches as review_required",
+        "A dedup candidate can be persisted as a review item with the candidate entity IDs attached",
+        "Approving a dedup review item updates the stored entity graph instead of only returning a helper object",
+        "The review item history records the approval action and linked target object ID",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 22,
@@ -358,12 +401,14 @@
     },
     {
       "id": "US-023",
-      "title": "Run structural and knowledge lint before merge",
-      "description": "As the system, I want structural and knowledge lint before merge so that invalid schema, broken links, and unsupported claims are blocked early.",
+      "title": "Add parser and benchmark page content contracts",
+      "description": "As a wiki maintainer, I want every declared page type to have a real content model so that page validation and compilation cover the full page-type enum.",
       "acceptanceCriteria": [
-        "Detect broken links, orphan pages, invalid ids, duplicate ids, missing frontmatter, and invalid page types",
-        "Detect supported claims without evidence, inferred claims without inference notes, conflicted claims without conflict sources, and duplicate entity candidates",
-        "Classify lint findings into P0, P1, P2, and P3 severities",
+        "`parser` and `benchmark` page types each have a concrete content model in the page schema layer",
+        "Page validation accepts valid `parser` and `benchmark` pages and rejects invalid ones",
+        "Compiler tests cover rendering for all declared page types, including `parser` and `benchmark`",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 23,
@@ -374,12 +419,14 @@
     },
     {
       "id": "US-024",
-      "title": "Block auto-merge on release gate failures",
-      "description": "As a product owner, I want release gates enforced automatically so that invalid or regressed outputs do not merge into the formal wiki.",
+      "title": "Replace handwritten frontmatter serialization with YAML output",
+      "description": "As a wiki maintainer, I want frontmatter generated by a YAML serializer so that quotes, multilingual text, and lists round-trip safely.",
       "acceptanceCriteria": [
-        "Prevent auto-merge when P0 lint exists",
-        "Prevent auto-merge when harness has not run or when regression exceeds thresholds",
-        "Prevent auto-merge when unsupported claims increase or when fallback output is below confidence policy",
+        "Wiki frontmatter is generated through a YAML serializer instead of string concatenation",
+        "A round-trip test parses generated frontmatter back into the original data model",
+        "Titles or field values containing quotes, punctuation, or multilingual text do not break the serialized frontmatter",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 24,
@@ -390,12 +437,14 @@
     },
     {
       "id": "US-025",
-      "title": "Run harness and publish ingest reports",
-      "description": "As a product owner, I want a harness report for every ingest run so that parse quality, knowledge quality, and maintenance quality are measurable over time.",
+      "title": "Split compiler output into compiled page state and patch diff",
+      "description": "As a system maintainer, I want the compiler to produce a compiled page object and a patch diff so that page updates are computed before any file write happens.",
       "acceptanceCriteria": [
-        "Run harness for every ingest run",
-        "Publish an ingest report with parse quality, knowledge quality, and maintenance quality sections",
-        "Persist the harness output in a queryable report location",
+        "The compiler exposes a `CompiledPage`-style output that can be created without writing a wiki file",
+        "Diffing an existing page and a compiled page returns a patch object instead of raw markdown text only",
+        "Updating an existing page preserves `created_at`, page identity, and existing backlinks in the compiled state",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 25,
@@ -406,12 +455,14 @@
     },
     {
       "id": "US-026",
-      "title": "Publish regression comparison reports",
-      "description": "As a parser engineer, I want regression comparison reports across re-ingest runs so that parser and schema changes can be evaluated instead of guessed.",
+      "title": "Implement patch staging and merge lifecycle",
+      "description": "As a reviewer, I want patches to move through explicit staging and merge states so that wiki updates cannot bypass reviewable patch objects.",
       "acceptanceCriteria": [
-        "Compare current ingest output against a previous run or golden baseline",
-        "Publish a regression report that highlights changed claims, links, and structural outputs",
-        "Make the regression result available to release gate logic",
+        "Patch generation assigns a stable `patch_id` and computes risk or blast metadata before merge",
+        "A patch can move through staged and merged states with persisted status transitions",
+        "No wiki page write path bypasses patch creation for page updates covered by the compiler flow",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 26,
@@ -422,12 +473,14 @@
     },
     {
       "id": "US-027",
-      "title": "Build the review queue backend",
-      "description": "As a reviewer, I want a review queue backend so that high-risk patches, conflicted claims, and complex parsing cases can be triaged in one place.",
+      "title": "Implement patch rollback against merged wiki state",
+      "description": "As a reviewer, I want merged patches to be reversible so that a bad patch can restore the last approved wiki state.",
       "acceptanceCriteria": [
-        "Store review queue entries for high-risk patches and review-required objects",
-        "Track reviewer, timestamp, target object, decision, reason, linked patch, and optional note",
-        "Support approve, reject, and request-changes state transitions",
+        "Rolling back a merged patch restores the previously merged wiki state snapshot for the affected page or pages",
+        "Rollback changes the patch lifecycle state to a persisted rolled-back state or equivalent audit state",
+        "A rollback test proves that the restored wiki state matches the last approved version before the patch was merged",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 27,
@@ -438,14 +491,15 @@
     },
     {
       "id": "US-028",
-      "title": "Build the review console page shell",
-      "description": "As a reviewer, I want a review console page shell so that I can inspect review-required documents through a dedicated UI instead of plain markdown alone.",
+      "title": "Reload review queue state and persist every decision",
+      "description": "As a reviewer, I want queue state to survive restart and every decision to be durable so that manual review is auditable.",
       "acceptanceCriteria": [
-        "Render a review console page that can open a review-required source or patch",
-        "Display the original page image or equivalent source rendering in the console",
-        "Show the associated patch or review target summary alongside the source view",
-        "Typecheck passes",
-        "Verify in browser using agent-browser"
+        "Review queue initialization loads existing queue items from disk into memory",
+        "`approve`, `reject`, and `request_changes` each persist the updated review item to disk",
+        "`list_pending()` returns the pending items that exist on disk after a fresh process start",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
       ],
       "priority": 28,
       "passes": true,
@@ -455,14 +509,15 @@
     },
     {
       "id": "US-029",
-      "title": "Add bbox and reading-order overlays to the review console",
-      "description": "As a reviewer, I want bbox and reading-order overlays in the review console so that layout and sequence problems are visible on the original page image.",
+      "title": "Extend lint to body, links, anchors, and schema consistency",
+      "description": "As a release gate maintainer, I want lint to inspect the compiled page body and graph consistency so that structurally bad patches are blocked before merge.",
       "acceptanceCriteria": [
-        "Display block bounding boxes over the source rendering",
-        "Display reading-order overlays or numbering for the selected page",
-        "Allow the reviewer to inspect the block linked to the overlay",
-        "Typecheck passes",
-        "Verify in browser using agent-browser"
+        "Lint can report findings for page body issues, broken wikilinks, missing or invalid anchors, and schema-body mismatches",
+        "A deliberately bad patch fixture produces at least one blocking lint finding",
+        "Lint can read the relevant DocIR or compiled page inputs instead of ignoring them",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
       ],
       "priority": 29,
       "passes": true,
@@ -472,14 +527,15 @@
     },
     {
       "id": "US-030",
-      "title": "Add claim drilldown and parser compare to the review console",
-      "description": "As a reviewer, I want claim-to-evidence drilldown and parser comparison in the review console so that I can validate knowledge outputs against source evidence and compare parser behavior.",
+      "title": "Make harness metrics and release gate config-driven",
+      "description": "As a release gate maintainer, I want harness metrics and merge blocking thresholds to come from config so that the production gate is not hardcoded.",
       "acceptanceCriteria": [
-        "Allow a reviewer to open a claim and navigate to its evidence anchors",
-        "Display parser comparison data for a source in the review console",
-        "Keep the review target, source view, and evidence drilldown synchronized",
-        "Typecheck passes",
-        "Verify in browser using agent-browser"
+        "Harness output contains parse, knowledge, and maintenance metrics in a structured report artifact",
+        "Release gate decisions read configured thresholds from application config instead of hardcoded values",
+        "A failing harness report can block merge through the configured release gate path",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
       ],
       "priority": 30,
       "passes": true,
@@ -489,12 +545,14 @@
     },
     {
       "id": "US-031",
-      "title": "Add conflict, dedup, and deprecation workflows",
-      "description": "As a knowledge maintainer, I want explicit conflict, entity dedup, and deprecation workflows so that the wiki can evolve without silently overwriting history.",
+      "title": "Turn CLI parse, compile, patch, review, and report commands into real entry points",
+      "description": "As a DocOS operator, I want the CLI commands to execute real workflows so that the repository has a usable product interface instead of demo placeholders.",
       "acceptanceCriteria": [
-        "Mark conflicted claims and preserve both sides of the evidence",
-        "Support candidate-based entity dedup suggestions without implicit merge",
-        "Support deprecated status with preserved history and replacement links where applicable",
+        "`docos parse`, `docos compile`, `docos patch list`, `docos patch apply`, `docos patch merge`, `docos patch rollback`, `docos review list`, `docos review approve`, `docos review reject`, `docos review request-changes`, and `docos report` all return real state from persisted artifacts",
+        "Review approve or reject commands update the stored review queue state",
+        "CLI commands no longer return `not yet connected` or placeholder-only responses for the implemented paths",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 31,
@@ -505,15 +563,107 @@
     },
     {
       "id": "US-032",
-      "title": "Add CLI commands for the core pipeline",
-      "description": "As an operator, I want CLI commands for the core pipeline so that ingest, parsing, compilation, review, and reporting can run in a repeatable local workflow.",
+      "title": "Upgrade router scoring and parser health checks",
+      "description": "As a platform maintainer, I want route selection to combine hard filters, soft scores, and parser health so that different documents land on the expected route for explainable reasons.",
       "acceptanceCriteria": [
-        "Provide CLI commands for ingest, route, parse, normalize, extract, compile, lint, eval, review list, review approve, review reject, and report",
-        "Ensure each CLI command maps to the underlying pipeline stage or review action",
-        "Document the expected inputs and outputs for each command",
+        "Router scoring distinguishes hard filters from soft score contributions",
+        "Signals including language, scanned state, known-failure hints, target mode, and formula-heavy state can affect route choice",
+        "Route logs include a score breakdown and parser health contribution for the selected route",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
         "Typecheck passes"
       ],
       "priority": 32,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-033",
+      "title": "Add domain skills for document routing and wiki workflows",
+      "description": "As a future agent user, I want domain-specific skills that match the DocOS workflow so that the skill layer reflects the actual product architecture.",
+      "acceptanceCriteria": [
+        "Skill definitions exist for document routing, parse-to-DocIR, normalization, extraction, patch generation, lint reconciliation, review routing, and grounded wiki queries",
+        "Each new skill file defines its expected input shape, output shape, invariants, fallback behavior, and evaluation guidance",
+        "The new skills live in the documented skill directory and can be discovered from repository docs",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
+      ],
+      "priority": 33,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-034",
+      "title": "Align README claims with implemented behavior",
+      "description": "As a new contributor, I want README statements to match the real repository state so that the docs do not claim closed loops that the code still lacks.",
+      "acceptanceCriteria": [
+        "README only documents behaviors and directories that exist in the repository or clearly labels them as roadmap items",
+        "If `schemas/` is documented as an output artifact, the repository contains real exported schemas or the claim is removed",
+        "README command examples match the implemented CLI behavior and current repository layout",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
+      ],
+      "priority": 34,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-035",
+      "title": "Add optional dependency extras and install docs",
+      "description": "As a maintainer, I want dependency extras grouped by capability so that users can install only parsers, OCR, LLM, or dev tooling they actually need.",
+      "acceptanceCriteria": [
+        "`pyproject.toml` defines optional dependency groups for parser, OCR, LLM, and dev capabilities",
+        "README includes one minimal install command and one full install command that reference the new extras",
+        "A clean environment can resolve the declared extras without syntax errors in the project metadata",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
+      ],
+      "priority": 35,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-036",
+      "title": "Add PDF fixtures and workflow regression tests",
+      "description": "As a maintainer, I want simple and complex PDF fixtures with workflow tests so that regressions in the ingest pipeline can be caught automatically.",
+      "acceptanceCriteria": [
+        "The test suite includes at least one simple PDF fixture and one complex PDF fixture",
+        "Workflow integration tests cover at least ingest, route, parse, normalize, extract, compile, and report for the fixtures",
+        "Regression tests record a baseline for re-ingest stability on at least one unchanged fixture",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
+      ],
+      "priority": 36,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-037",
+      "title": "Validate the full PDF closed loop and re-ingest stability",
+      "description": "As a release owner, I want one end-to-end PDF run that proves the entire artifact chain and re-ingest stability baseline so that v1 alpha has a measurable closed loop.",
+      "acceptanceCriteria": [
+        "Running the selected PDF fixture produces a source record, run manifest, DocIR artifact, knowledge artifact, patch artifact, lint artifact, harness artifact, and review artifact when review is required",
+        "`docos report <run_id>` shows the generated artifacts for the completed PDF run",
+        "Re-ingesting the same unchanged fixture shows stable entity, claim, relation, and anchor IDs and records a measurable diff-stability result",
+        "python -m mypy docos/ exits with code 0",
+        "python -m pytest tests/ -q exits with code 0",
+        "Typecheck passes"
+      ],
+      "priority": 37,
       "passes": true,
       "notes": "",
       "retryCount": 0,

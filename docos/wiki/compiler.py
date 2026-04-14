@@ -18,6 +18,7 @@ from docos.models.knowledge import (
     KnowledgeRelation,
 )
 from docos.models.page import (
+    BenchmarkPageContent,
     ComparisonPageContent,
     ConceptPageContent,
     DecisionPageContent,
@@ -26,6 +27,7 @@ from docos.models.page import (
     Frontmatter,
     PageStatus,
     PageType,
+    ParserPageContent,
     ReviewStatus,
     SourcePageContent,
 )
@@ -34,28 +36,77 @@ from docos.models.source import SourceRecord
 
 
 # ---------------------------------------------------------------------------
+# Compiled page result
+# ---------------------------------------------------------------------------
+
+class CompiledPage:
+    """Result of compiling a wiki page — state before any file write."""
+
+    def __init__(
+        self,
+        frontmatter: Frontmatter,
+        body: str,
+        page_path: Path,
+        run_id: str = "",
+        existing_body: str | None = None,
+    ) -> None:
+        self.frontmatter = frontmatter
+        self.body = body
+        self.page_path = page_path
+        self.run_id = run_id
+        self.existing_body = existing_body
+
+    def compute_patch(self, run_id: str = "", source_id: str = "") -> Patch | None:
+        """Compute a patch diff against existing page content.
+
+        Returns None if this is a new page (no existing content).
+        """
+        if self.existing_body is None:
+            return None
+
+        change_type = ChangeType.UPDATE_PAGE
+        return Patch(
+            patch_id=f"pat_{self.frontmatter.id}_{hash(self.body) % 1000000:06d}",
+            run_id=run_id,
+            source_id=source_id,
+            changes=[
+                Change(type=change_type, target=str(self.page_path), summary="Page content update"),
+            ],
+            risk_score=0.3 if self.existing_body else 0.0,
+        )
+
+    @property
+    def full_content(self) -> str:
+        return _frontmatter_yaml(self.frontmatter) + "\n\n" + self.body
+
+
+# ---------------------------------------------------------------------------
 # Markdown builder helpers
 # ---------------------------------------------------------------------------
 
 def _frontmatter_yaml(fm: Frontmatter) -> str:
-    """Serialize frontmatter to YAML block."""
-    lines = ["---"]
-    lines.append(f"id: {fm.id}")
-    lines.append(f"type: {fm.type.value}")
-    lines.append(f"title: {fm.title!r}")
-    lines.append(f"status: {fm.status.value}")
-    lines.append(f"schema_version: {fm.schema_version!r}")
-    lines.append(f"created_at: {fm.created_at}")
-    lines.append(f"updated_at: {fm.updated_at}")
+    """Serialize frontmatter to YAML block using YAML serializer."""
+    import yaml  # type: ignore[import-untyped]
+
+    data: dict[str, Any] = {
+        "id": fm.id,
+        "type": fm.type.value,
+        "title": fm.title,
+        "status": fm.status.value,
+        "schema_version": fm.schema_version,
+        "created_at": str(fm.created_at),
+        "updated_at": str(fm.updated_at),
+        "review_status": fm.review_status.value,
+    }
     if fm.source_docs:
-        lines.append(f"source_docs: {fm.source_docs}")
+        data["source_docs"] = fm.source_docs
     if fm.related_entities:
-        lines.append(f"related_entities: {fm.related_entities}")
+        data["related_entities"] = fm.related_entities
     if fm.related_claims:
-        lines.append(f"related_claims: {fm.related_claims}")
-    lines.append(f"review_status: {fm.review_status.value}")
-    lines.append("---")
-    return "\n".join(lines)
+        data["related_claims"] = fm.related_claims
+
+    yaml_str = yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    return f"---\n{yaml_str}---"
 
 
 def _slug(text: str) -> str:
@@ -395,6 +446,85 @@ class WikiCompiler:
 
         body = "\n".join(lines)
         page_path = self._wiki_dir / "decisions" / f"{_slug(statement)}.md"
+        return fm, body, page_path
+
+    def compile_parser_page(
+        self,
+        parser_name: str,
+        content: ParserPageContent,
+        source_ids: list[str] | None = None,
+    ) -> tuple[Frontmatter, str, Path]:
+        """Compile a parser info page."""
+        today = date.today()
+        fm = Frontmatter(
+            id=f"parser-{_slug(parser_name)}",
+            type=PageType.PARSER,
+            title=f"Parser: {parser_name}",
+            created_at=today,
+            updated_at=today,
+            source_docs=source_ids or [],
+            review_status=ReviewStatus.NOT_NEEDED,
+        )
+        lines = [
+            f"# Parser: {parser_name}",
+            "",
+            f"**Version:** {content.parser_version}",
+            "",
+        ]
+        if content.capabilities:
+            lines.append("## Capabilities")
+            for cap in content.capabilities:
+                lines.append(f"- {cap}")
+            lines.append("")
+        if content.known_limitations:
+            lines.append("## Known Limitations")
+            for lim in content.known_limitations:
+                lines.append(f"- {lim}")
+            lines.append("")
+        if content.fallback_parsers:
+            lines.append("## Fallback Parsers")
+            for fb in content.fallback_parsers:
+                lines.append(f"- {fb}")
+            lines.append("")
+        body = "\n".join(lines)
+        page_path = self._wiki_dir / "parsers" / f"{_slug(parser_name)}.md"
+        return fm, body, page_path
+
+    def compile_benchmark_page(
+        self,
+        benchmark_name: str,
+        content: BenchmarkPageContent,
+        source_ids: list[str] | None = None,
+    ) -> tuple[Frontmatter, str, Path]:
+        """Compile a benchmark page."""
+        today = date.today()
+        fm = Frontmatter(
+            id=f"benchmark-{_slug(benchmark_name)}",
+            type=PageType.BENCHMARK,
+            title=f"Benchmark: {benchmark_name}",
+            created_at=today,
+            updated_at=today,
+            source_docs=source_ids or [],
+            review_status=ReviewStatus.NOT_NEEDED,
+        )
+        lines = [
+            f"# Benchmark: {benchmark_name}",
+            "",
+            f"**Dataset:** {content.dataset_description}",
+            "",
+        ]
+        if content.evaluation_dimensions:
+            lines.append("## Evaluation Dimensions")
+            for dim in content.evaluation_dimensions:
+                lines.append(f"- {dim}")
+            lines.append("")
+        if content.parser_results:
+            lines.append("## Parser Results")
+            for res in content.parser_results:
+                lines.append(f"- {res}")
+            lines.append("")
+        body = "\n".join(lines)
+        page_path = self._wiki_dir / "benchmarks" / f"{_slug(benchmark_name)}.md"
         return fm, body, page_path
 
     # ------------------------------------------------------------------

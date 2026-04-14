@@ -110,3 +110,49 @@ class Patch(BaseModel):
     rollback_of: str | None = Field(
         default=None, description="If this patch rolls back a previous patch, its ID"
     )
+
+    # Wiki state snapshot for rollback
+    pre_merge_snapshot: str | None = Field(
+        default=None, description="Wiki page content before this patch was merged"
+    )
+
+    def stage(self) -> None:
+        """Transition to staged (ready for review/merge). Computes risk metadata."""
+        if self.merge_status != MergeStatus.PENDING:
+            msg = f"Cannot stage patch in {self.merge_status.value} status"
+            raise ValueError(msg)
+        self.review_required = self.risk_score > 0.3 or self.blast_radius.pages > 2
+
+    def auto_merge(self) -> None:
+        """Auto-merge a low-risk patch."""
+        if self.merge_status != MergeStatus.PENDING:
+            msg = f"Cannot merge patch in {self.merge_status.value} status"
+            raise ValueError(msg)
+        if self.review_required:
+            msg = "Cannot auto-merge a patch that requires review"
+            raise ValueError(msg)
+        self.merge_status = MergeStatus.AUTO_MERGED
+        self.merged_at = datetime.now()
+
+    def approve_merge(self, reviewer: str, note: str = "") -> None:
+        """Approve and merge a reviewed patch."""
+        if self.merge_status not in (MergeStatus.PENDING,):
+            msg = f"Cannot approve patch in {self.merge_status.value} status"
+            raise ValueError(msg)
+        self.merge_status = MergeStatus.APPROVED
+        self.merged_at = datetime.now()
+        self.reviewer = reviewer
+        self.review_note = note
+
+    def reject(self, reviewer: str, reason: str = "") -> None:
+        """Reject a patch."""
+        self.merge_status = MergeStatus.REJECTED
+        self.reviewer = reviewer
+        self.review_note = reason
+
+    def rollback(self) -> None:
+        """Roll back a merged patch."""
+        if self.merge_status not in (MergeStatus.AUTO_MERGED, MergeStatus.APPROVED):
+            msg = f"Cannot rollback patch in {self.merge_status.value} status"
+            raise ValueError(msg)
+        self.merge_status = MergeStatus.ROLLED_BACK

@@ -33,38 +33,55 @@ Raw Sources → Parser Router → Canonical DocIR → Claim/Entity Graph → Mar
 docos/                        # 核心包
   models/                     # 数据模型
     docir.py                  #   Canonical DocIR (19 block types, 10 relation types)
-    patch.py                  #   变更提案 (11 change types, 5 merge statuses)
-    page.py                   #   Wiki 页面模板 (8 page types)
+    patch.py                  #   变更提案 (11 change types, lifecycle methods)
+    page.py                   #   Wiki 页面模板 (8 page types, incl. parser & benchmark)
     knowledge.py              #   Entity / Claim / Relation / Evidence Anchor
     source.py                 #   Source Registry Record
     config.py                 #   外置配置 (Router / Threshold / Gate / Policy)
+    run.py                    #   Run Manifest (pipeline stage tracking)
   pipeline/                   # 解析管线
-    parser.py                 #   Parser Backend 抽象接口
-    router.py                 #   信号驱动的路由选择
-    orchestrator.py           #   Fallback 执行编排
+    parser.py                 #   Parser Backend 抽象接口 + Registry
+    parsers/                  #   具体解析器实现
+      stdlib_pdf.py           #     主 PDF 解析器 (标准库)
+      basic_text.py           #     Fallback 文本解析器
+    router.py                 #   信号驱动的路由选择 (hard filter + soft score)
+    orchestrator.py           #   Fallback 执行编排 + DebugAssetStore 集成
     normalizer.py             #   Page-local 归一化 + Document-global Repair
+    signal_extractor.py       #   确定性文档信号提取
+    invariants.py             #   DocIR 结构不变量验证
   knowledge/                  # 知识工程
-    extractor.py              #   Entity / Claim / Relation 抽取 Pipeline
+    extractor.py              #   Entity / Claim / Relation 抽取 (确定性 ID)
     ops.py                    #   Conflict / Dedup / Deprecation 工作流
   wiki/                       # Wiki 编译
-    compiler.py               #   8 种页面类型的 Markdown 编译器
+    compiler.py               #   8 种页面类型编译器 + CompiledPage + Patch diff
   lint/                       # 质量检查
-    checker.py                #   结构 / 知识 / 运维 Lint (P0-P3)
+    checker.py                #   结构 / 知识 / 运维 / Body / Anchor Lint (P0-P3)
   harness/                    # 评测体系
     runner.py                 #   Parse / Knowledge / Maintenance 质量评估
   review/                     # 审阅管理
-    queue.py                  #   Review Queue + Approve / Reject / Request Changes
+    queue.py                  #   Review Queue + 磁盘持久化 + Approve/Reject
   cli/                        # 命令行接口
-    main.py                   #   ingest / route / parse / compile / lint / eval / review
+    main.py                   #   全命令真实连接
   registry.py                 # Source Registry (hash 去重 + ingest 历史)
   source_store.py             # 不可变 Raw Source 存储
   debug_store.py              # Debug Asset 持久化
+  run_store.py                # Run Manifest 持久化
+  ir_store.py                 # DocIR 产物持久化
+  knowledge_store.py          # Knowledge 产物持久化
+  artifact_stores.py          # Patch / Report / Wiki State 持久化
 
 configs/
   router.yaml                 # 路由 / 阈值 / 门禁 / 审阅策略配置
 
-schemas/                      # JSON Schema 文件
-tests/                        # 202 个单元测试
+.agents/skills/               # Domain Skills
+  docos-route/                #   文档路由
+  docos-parse/                #   文档解析
+  docos-extract/              #   知识抽取
+  docos-patch/                #   补丁管理
+  docos-lint/                 #   质量检查
+  docos-review/               #   审阅路由
+
+tests/                        # 340+ 单元测试
 ```
 
 ## 数据分层
@@ -102,19 +119,30 @@ tests/                        # 202 个单元测试
 ## 快速开始
 
 ```bash
-# 安装
-pip install -e ".[dev]"
+# 安装 (minimal)
+pip install -e .
+
+# 安装 (full, with dev + parser + OCR + LLM extras)
+pip install -e ".[dev,parser,ocr,llm]"
 
 # 验证
 python -m mypy docos/          # 类型检查
-python -m pytest tests/ -v     # 运行 202 个测试
+python -m pytest tests/ -v     # 运行 340+ 测试
 
 # CLI 使用
-docos ingest document.pdf      # 导入文档
-docos route src_xxxx           # 查看路由决策
-docos lint                     # 运行 lint 检查
-docos eval                     # 运行 harness 评估
-docos review list              # 查看待审阅项
+docos ingest document.pdf              # 导入文档
+docos ingest document.pdf --run        # 导入并创建 run manifest
+docos route src_xxxx                   # 查看路由决策 + 信号提取
+docos parse src_xxxx                   # 解析文档
+docos normalize src_xxxx               # 归一化到 DocIR
+docos extract src_xxxx                 # 知识抽取
+docos compile src_xxxx                 # 编译 wiki 页面
+docos lint                             # 运行 lint 检查
+docos eval --run-id run_xxxx           # 运行 harness 评估
+docos review list                      # 查看待审阅项
+docos review approve rev_xxx           # 审批
+docos review reject rev_xxx            # 驳回
+docos report run_xxxx                  # 查看运行报告
 ```
 
 ## 质量指标（v1 目标）
