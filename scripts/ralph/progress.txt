@@ -293,3 +293,20 @@
   - Dual-column fixture uses x-offsets (72 and 320) in Td commands; signal extractor needs both clusters for detection
   - OCR-like fixture uses /Subtype /Image with large /Length streams to trigger is_scanned=True detection
 ---
+
+## 2026-04-15 - US-034
+- Added observability fields to RunManifest: selected_route, parser_chain, fallback_used, lint_summary, harness_summary, gate_decision, review_status
+- Added duration_seconds and warnings fields to PipelineStage model
+- mark_stage() now auto-calculates duration_seconds when stage completes or fails
+- Added add_stage_warning() helper method to RunManifest
+- Updated PipelineRunner to populate all observability fields during pipeline execution (route, parse, lint, harness, gate stages)
+- Updated report CLI command to read observability fields from manifest (with fallback to artifact files for backward compat)
+- Report output now includes duration_seconds and warnings per stage
+- Kept backward compat fields (route dict, parser_chain dict, harness_status) for existing US-004/US-012 tests
+- 29 tests covering: field population, duration recording, warnings, serialization round-trip, RunStore persistence, report CLI output
+- **Files changed:** docos/models/run.py, docos/pipeline/runner.py, docos/cli/main.py, tests/test_observability_us034.py, scripts/ralph/prd.json
+- **Future iterations learning:**
+  - Report CLI has backward compat expectations: `route` (dict), `parser_chain` (dict with primary/fallbacks), `harness_status` — always keep these when adding new fields
+  - PipelineStage model changes affect all tests that create manifests — duration_seconds and warnings have safe defaults (None and [])
+  - When adding manifest fields, update both the runner (to populate) AND the report CLI (to display) to keep them in sync
+---
