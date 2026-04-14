@@ -16,6 +16,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
 ]
+# Parser extras — install the parser backend you need.
+# The runtime registry only has "stdlib_pdf" and "basic_text_fallback" by default.
+# Names referenced in configs/router.yaml (pymupdf, marker, paddleocr, pdfplumber,
+# tesseract) require their corresponding extra below.
 parser = [
     "pymupdf>=1.24",
 ]

@@ -21,6 +21,32 @@ from docos.pipeline.router import RouteDecision
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Parser-name → optional-dependency-group mapping
+# ---------------------------------------------------------------------------
+
+_PARSER_EXTRAS: dict[str, str] = {
+    "pymupdf": "parser",
+    "pdfplumber": "parser",
+    "marker": "parser",
+    "paddleocr": "ocr",
+    "tesseract": "ocr",
+}
+
+
+def _missing_parser_message(parser_name: str) -> str:
+    """Return a helpful error message for an unresolvable parser name."""
+    extra = _PARSER_EXTRAS.get(parser_name)
+    if extra:
+        return (
+            f"Parser '{parser_name}' is not registered in the parser registry. "
+            f"Install it with: pip install docos[{extra}]"
+        )
+    return (
+        f"Parser '{parser_name}' is not registered in the parser registry. "
+        f"Check pyproject.toml [project.optional-dependencies] for available extras."
+    )
+
 
 # ---------------------------------------------------------------------------
 # Pipeline run result
@@ -134,7 +160,7 @@ class PipelineOrchestrator:
                     result.failed_attempt_paths.append(unavailable_log)
                 if is_primary:
                     result.primary_succeeded = False
-                    result.failure_reason = f"Primary parser '{parser_name}' not available"
+                    result.failure_reason = _missing_parser_message(parser_name)
                 continue
 
             logger.info(
