@@ -192,6 +192,11 @@ class ParserRouter:
         if route.table_formula_heavy is not None and signals.is_table_heavy == route.table_formula_heavy:
             soft_score += 1
 
+        # Formula-heavy signal: routes with table_formula_heavy=True also
+        # match documents that are formula-heavy (even if not table-heavy).
+        if route.table_formula_heavy is True and signals.is_formula_heavy is True:
+            soft_score += 1
+
         if route.image_heavy is not None and signals.is_image_heavy == route.image_heavy:
             soft_score += 1
 
@@ -218,6 +223,8 @@ class ParserRouter:
         matched: dict[str, Any] = {}
         if signals.is_table_heavy:
             matched["table_formula_heavy"] = True
+        if signals.is_formula_heavy:
+            matched["is_formula_heavy"] = True
         if signals.is_dual_column:
             matched["dual_column"] = True
         if signals.needs_ocr:
