@@ -331,6 +331,22 @@
       "description": "Gate pass/block decision",
       "title": "Gate Decision"
     },
+    "gate_blockers": {
+      "description": "Reasons the gate blocked auto-merge",
+      "items": {
+        "type": "string"
+      },
+      "title": "Gate Blockers",
+      "type": "array"
+    },
+    "release_reasoning": {
+      "description": "Reasoning for the release decision",
+      "items": {
+        "type": "string"
+      },
+      "title": "Release Reasoning",
+      "type": "array"
+    },
     "review_status": {
       "anyOf": [
         {
@@ -343,6 +359,54 @@
       "default": null,
       "description": "Current review status (pending/approved/rejected/none)",
       "title": "Review Status"
+    },
+    "override_reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Identity of the reviewer who overrode the gate",
+      "title": "Override Reviewer"
+    },
+    "override_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Required reason for the manual override",
+      "title": "Override Reason"
+    },
+    "override_timestamp": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "When the override was applied",
+      "title": "Override Timestamp"
+    },
+    "overridden_checks": {
+      "description": "Which gate checks were overridden",
+      "items": {
+        "type": "string"
+      },
+      "title": "Overridden Checks",
+      "type": "array"
     }
   },
   "required": [

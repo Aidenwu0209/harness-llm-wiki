@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from docos.models.docir import DocIR
 from docos.models.page import Frontmatter
 from docos.models.patch import Patch
 from docos.models.run import RunManifest
@@ -16,6 +17,7 @@ from docos.models.run import RunManifest
 SCHEMAS_DIR = Path(__file__).resolve().parent
 
 MODELS = [
+    ("doc", DocIR),
     ("run", RunManifest),
     ("page", Frontmatter),
     ("patch", Patch),

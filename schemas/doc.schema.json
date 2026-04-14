@@ -1,0 +1,576 @@
+{
+  "$defs": {
+    "Block": {
+      "description": "A single structural block within a page.\n\nBlocks are the smallest addressable units in DocIR. Each block carries\nenough metadata to trace back to the original parser output and to\nlocate the content in the source document.",
+      "properties": {
+        "block_id": {
+          "description": "Unique block identifier",
+          "title": "Block Id",
+          "type": "string"
+        },
+        "page_no": {
+          "description": "1-based page number",
+          "minimum": 1,
+          "title": "Page No",
+          "type": "integer"
+        },
+        "block_type": {
+          "$ref": "#/$defs/BlockType"
+        },
+        "reading_order": {
+          "description": "Reading order within the page",
+          "minimum": 0,
+          "title": "Reading Order",
+          "type": "integer"
+        },
+        "bbox": {
+          "description": "Bounding box (x0, y0, x1, y1)",
+          "maxItems": 4,
+          "minItems": 4,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "title": "Bbox",
+          "type": "array"
+        },
+        "parent_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Id"
+        },
+        "children_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Children Ids",
+          "type": "array"
+        },
+        "text_plain": {
+          "default": "",
+          "title": "Text Plain",
+          "type": "string"
+        },
+        "text_md": {
+          "default": "",
+          "title": "Text Md",
+          "type": "string"
+        },
+        "text_html": {
+          "default": "",
+          "title": "Text Html",
+          "type": "string"
+        },
+        "latex": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Latex"
+        },
+        "table_cells": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/TableCell"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Table Cells"
+        },
+        "caption_target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "block_id of the figure/table this caption describes",
+          "title": "Caption Target"
+        },
+        "footnote_refs": {
+          "description": "IDs of footnote blocks referenced by this block",
+          "items": {
+            "type": "string"
+          },
+          "title": "Footnote Refs",
+          "type": "array"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/Citation"
+          },
+          "title": "Citations",
+          "type": "array"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source_parser": {
+          "description": "Name of the parser that produced this block",
+          "title": "Source Parser",
+          "type": "string"
+        },
+        "source_node_id": {
+          "description": "Original node ID in parser-specific output",
+          "title": "Source Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "block_id",
+        "page_no",
+        "block_type",
+        "reading_order",
+        "bbox",
+        "source_parser",
+        "source_node_id"
+      ],
+      "title": "Block",
+      "type": "object"
+    },
+    "BlockType": {
+      "description": "Supported block types (v1).",
+      "enum": [
+        "title",
+        "heading",
+        "paragraph",
+        "list",
+        "list_item",
+        "table",
+        "table_cell",
+        "figure",
+        "caption",
+        "equation",
+        "equation_block",
+        "footnote",
+        "reference_item",
+        "code_block",
+        "quote",
+        "header",
+        "footer",
+        "page_number",
+        "unknown"
+      ],
+      "title": "BlockType",
+      "type": "string"
+    },
+    "Citation": {
+      "description": "A citation reference within a block.",
+      "properties": {
+        "ref_id": {
+          "description": "ID of the referenced block or external ref",
+          "title": "Ref Id",
+          "type": "string"
+        },
+        "ref_text": {
+          "default": "",
+          "title": "Ref Text",
+          "type": "string"
+        },
+        "ref_type": {
+          "default": "internal",
+          "enum": [
+            "internal",
+            "external"
+          ],
+          "title": "Ref Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ref_id"
+      ],
+      "title": "Citation",
+      "type": "object"
+    },
+    "DocIRWarning": {
+      "description": "A top-level warning for the document.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "page_no": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page No"
+        },
+        "block_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Block Id"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "DocIRWarning",
+      "type": "object"
+    },
+    "Page": {
+      "description": "A single page in the document.\n\nEach page contains references to its blocks and carries layout metadata.",
+      "properties": {
+        "page_no": {
+          "description": "1-based page number",
+          "minimum": 1,
+          "title": "Page No",
+          "type": "integer"
+        },
+        "width": {
+          "exclusiveMinimum": 0,
+          "title": "Width",
+          "type": "number"
+        },
+        "height": {
+          "exclusiveMinimum": 0,
+          "title": "Height",
+          "type": "number"
+        },
+        "rotation": {
+          "default": 0.0,
+          "title": "Rotation",
+          "type": "number"
+        },
+        "image_uri": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "URI of rendered page image",
+          "title": "Image Uri"
+        },
+        "ocr_used": {
+          "default": false,
+          "title": "Ocr Used",
+          "type": "boolean"
+        },
+        "reading_order_version": {
+          "default": "1",
+          "title": "Reading Order Version",
+          "type": "string"
+        },
+        "blocks": {
+          "description": "Ordered list of block IDs on this page",
+          "items": {
+            "type": "string"
+          },
+          "title": "Blocks",
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "$ref": "#/$defs/PageWarning"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "page_no",
+        "width",
+        "height"
+      ],
+      "title": "Page",
+      "type": "object"
+    },
+    "PageWarning": {
+      "description": "A warning associated with a page.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "severity": {
+          "default": "low",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "PageWarning",
+      "type": "object"
+    },
+    "Relation": {
+      "description": "A typed relation between two blocks.",
+      "properties": {
+        "relation_id": {
+          "title": "Relation Id",
+          "type": "string"
+        },
+        "relation_type": {
+          "$ref": "#/$defs/RelationType"
+        },
+        "source_block_id": {
+          "title": "Source Block Id",
+          "type": "string"
+        },
+        "target_block_id": {
+          "title": "Target Block Id",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "relation_id",
+        "relation_type",
+        "source_block_id",
+        "target_block_id"
+      ],
+      "title": "Relation",
+      "type": "object"
+    },
+    "RelationType": {
+      "description": "Supported relation types between blocks.",
+      "enum": [
+        "caption_of",
+        "footnote_of",
+        "continued_from",
+        "continued_to",
+        "references",
+        "mentioned_in",
+        "same_table_as",
+        "same_section_as",
+        "duplicate_of",
+        "derived_from"
+      ],
+      "title": "RelationType",
+      "type": "string"
+    },
+    "TableCell": {
+      "description": "A single cell in a table block.",
+      "properties": {
+        "row": {
+          "description": "Row index (0-based)",
+          "minimum": 0,
+          "title": "Row",
+          "type": "integer"
+        },
+        "col": {
+          "description": "Column index (0-based)",
+          "minimum": 0,
+          "title": "Col",
+          "type": "integer"
+        },
+        "row_span": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Row Span",
+          "type": "integer"
+        },
+        "col_span": {
+          "default": 1,
+          "minimum": 1,
+          "title": "Col Span",
+          "type": "integer"
+        },
+        "text_plain": {
+          "default": "",
+          "title": "Text Plain",
+          "type": "string"
+        },
+        "is_header": {
+          "default": false,
+          "title": "Is Header",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "row",
+        "col"
+      ],
+      "title": "TableCell",
+      "type": "object"
+    }
+  },
+  "description": "Canonical Document Intermediate Representation.\n\nThis is the single machine-truth layer for parsed documents.\nAll parser outputs normalize into this structure before any downstream\nknowledge extraction or wiki compilation occurs.\n\nInvariants:\n- All block_ids must be unique across the document.\n- reading_order must not repeat within the same page.\n- bbox values must be valid rectangles.\n- Unknown blocks must NOT be silently dropped.",
+  "properties": {
+    "doc_id": {
+      "description": "Unique document IR identifier",
+      "title": "Doc Id",
+      "type": "string"
+    },
+    "source_id": {
+      "description": "Link back to source registry record",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "source_uri": {
+      "default": "",
+      "title": "Source Uri",
+      "type": "string"
+    },
+    "mime_type": {
+      "default": "application/pdf",
+      "title": "Mime Type",
+      "type": "string"
+    },
+    "parser": {
+      "description": "Parser route name",
+      "title": "Parser",
+      "type": "string"
+    },
+    "parser_version": {
+      "default": "",
+      "title": "Parser Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "1",
+      "description": "DocIR schema version",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "language": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Language",
+      "type": "array"
+    },
+    "page_count": {
+      "minimum": 0,
+      "title": "Page Count",
+      "type": "integer"
+    },
+    "pages": {
+      "items": {
+        "$ref": "#/$defs/Page"
+      },
+      "title": "Pages",
+      "type": "array"
+    },
+    "blocks": {
+      "items": {
+        "$ref": "#/$defs/Block"
+      },
+      "title": "Blocks",
+      "type": "array"
+    },
+    "relations": {
+      "items": {
+        "$ref": "#/$defs/Relation"
+      },
+      "title": "Relations",
+      "type": "array"
+    },
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/DocIRWarning"
+      },
+      "title": "Warnings",
+      "type": "array"
+    },
+    "confidence": {
+      "default": 1.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    }
+  },
+  "required": [
+    "doc_id",
+    "source_id",
+    "parser",
+    "page_count"
+  ],
+  "title": "DocIR",
+  "type": "object"
+}
