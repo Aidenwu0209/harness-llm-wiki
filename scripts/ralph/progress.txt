@@ -188,3 +188,19 @@
   - CompiledPage.compute_patch() uses SHA-256 of body content → deterministic patch_id for same content regardless of run_id
   - KnowledgeExtractionPipeline produces deterministic entity_id/claim_id values from same DocIR content
 ---
+## 2026-04-15 23:45 - US-036
+- Created tests/test_golden_loop_us036.py with 8 tests validating the full golden closed loop
+- Test 1 (test_golden_run_persists_all_artifacts): Runs simple_text fixture through full pipeline and verifies ALL artifacts persisted — route, DocIR, knowledge, patch, lint, harness, wiki state, route logs
+- Test 2 (test_report_cli_shows_golden_run_info): `docos report <run_id>` displays route, parser chain, gate decision, and all artifact locations
+- Tests 3-5: Re-running same fixture preserves stable entity_id, claim_id, and relation_id values
+- Test 6 (test_rerun_preserves_artifact_structure): Rerun produces same page count, block count, entity/claim/relation counts, and same route decision
+- Test 7 (test_rerun_does_not_regress_golden_path): Gate decision, harness pass/fail, and lint findings count are stable across reruns
+- Test 8 (test_golden_report_shows_all_artifact_locations): Report output includes paths for all persisted artifacts
+- All acceptance criteria met: mypy passes (41 files), 676 tests pass with no regressions
+- **Files changed:** tests/test_golden_loop_us036.py (new), scripts/ralph/prd.json
+- **Future iterations learning:**
+  - The existing US-029 (test_golden_pipeline_us029.py) and US-030 (test_rerun_stability_us030.py) cover overlapping territory; US-036 consolidates and extends with report CLI verification
+  - Report CLI output uses both `parser_chain` (dict) and `parser_chain_list` (list) keys; test should handle both formats
+  - The `monkeypatch.chdir(tmp_path)` pattern is needed for report CLI tests because the CLI uses `Path(".")` as base
+  - All stores use absolute paths from manifest, so report CLI works correctly after chdir to tmp_path
+---
