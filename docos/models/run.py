@@ -50,10 +50,10 @@ PIPELINE_STAGES: list[str] = [
     "normalize",
     "extract",
     "compile",
+    "patch",
     "lint",
     "harness",
     "gate",
-    "review",
 ]
 
 

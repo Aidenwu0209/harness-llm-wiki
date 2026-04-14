@@ -17,6 +17,63 @@ def cli() -> None:
 # Ingest pipeline commands
 # ---------------------------------------------------------------------------
 
+@cli.command("run")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option("--origin", default="cli", help="Source origin")
+@click.option("--tags", default="", help="Comma-separated tags")
+@click.option("--config", "config_path", default=None, help="Path to router.yaml config")
+def run_pipeline(file_path: str, origin: str, tags: str, config_path: str | None) -> None:
+    """Run the full pipeline on a document (ingest to report)."""
+    from docos.pipeline.runner import PipelineRunner
+
+    base = Path(".")
+    cfg = Path(config_path) if config_path else None
+    runner = PipelineRunner(base_dir=base, config_path=cfg)
+    result = runner.run(
+        file_path=Path(file_path),
+        origin=origin,
+        tags=tags.split(",") if tags else [],
+    )
+
+    output: dict[str, object] = {
+        "run_id": result.run_id,
+        "source_id": result.source_id,
+        "status": result.status.value,
+        "elapsed_seconds": round(result.elapsed_seconds, 2),
+    }
+
+    if result.failed_stage:
+        output["failed_stage"] = result.failed_stage
+        output["error_detail"] = result.error_detail
+
+    if result.route_decision:
+        output["route"] = result.route_decision.selected_route
+        output["parser"] = result.route_decision.primary_parser
+
+    if result.docir:
+        output["ir_pages"] = result.docir.page_count
+        output["ir_blocks"] = len(result.docir.blocks)
+
+    if result.entities:
+        output["entities"] = len(result.entities)
+    if result.claims:
+        output["claims"] = len(result.claims)
+    if result.patches:
+        output["patches"] = len(result.patches)
+
+    output["lint_findings"] = result.lint_findings_count
+    output["harness_passed"] = result.harness_passed
+    output["gate_passed"] = result.gate_passed
+
+    if result.gate_reasons:
+        output["gate_reasons"] = result.gate_reasons
+
+    click.echo(json.dumps(output, indent=2, default=str))
+
+    if result.status.value == "failed":
+        raise SystemExit(1)
+
+
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--origin", default="cli", help="Source origin")
