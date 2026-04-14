@@ -347,3 +347,13 @@
 - All tests run in standard test suite
 - **Changed files:** scripts/ralph/prd.json (passes: true)
 ---
+
+## [2026-04-15 19:40] - US-032
+- Added doc.schema.json (DocIR JSON Schema) to schemas/
+- Updated schemas/generate_schemas.py to include DocIR model
+- Test file: tests/test_schema_alignment_us032.py (15 tests)
+- Verifies all 4 schema files exist (doc, page, patch, run) and are valid JSON
+- Verifies all 8 CLI commands exist (run, ingest, route, parse, lint, eval, report, review)
+- Verifies schema properties match actual Pydantic model fields
+- **Changed files:** schemas/doc.schema.json (new), schemas/generate_schemas.py, schemas/*.schema.json (regenerated), tests/test_schema_alignment_us032.py, scripts/ralph/prd.json
+---
