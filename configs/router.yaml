@@ -1,5 +1,16 @@
 # Router configuration — defines how documents are routed to parsers.
 # Route selection reads from this config rather than hardcoded prompt branches.
+#
+# Alignment strategy: SHRINK-TO-IMPLEMENTED
+# This config only references parsers that are registered in the ParserRegistry
+# at runtime. The currently implemented parsers are:
+#   - stdlib_pdf:        Built-in PDF parser using regex-based text extraction
+#   - basic_text_fallback: Fallback text parser for non-PDF files
+#
+# To add new parsers (pymupdf, pdfplumber, marker, paddleocr, tesseract):
+# 1. Implement a ParserBackend subclass in docos/pipeline/parsers/
+# 2. Register it in PipelineRunner.__init__() (docos/pipeline/runner.py)
+# 3. Add the route entry here in router.yaml
 
 environment: local
 schema_version: "1"
@@ -15,63 +26,66 @@ router:
       table_formula_heavy: false
       image_heavy: false
       dual_column: false
-      primary_parser: pymupdf
-      fallback_parsers: [pdfplumber]
+      primary_parser: stdlib_pdf
+      fallback_parsers: [basic_text_fallback]
       expected_risks: []
       post_parse_repairs: ["normalize_headings", "remove_headers_footers"]
       review_policy: default
 
-    - name: complex_pdf_route
-      description: "High-fidelity route for complex layouts, tables, formulas"
-      file_types: ["application/pdf"]
-      requires_ocr: false
-      table_formula_heavy: true
-      dual_column: true
-      primary_parser: marker
-      fallback_parsers: [pymupdf, pdfplumber]
-      expected_risks: ["cross_page_table", "formula_fidelity"]
-      post_parse_repairs:
-        - normalize_headings
-        - remove_headers_footers
-        - fix_cross_page_tables
-        - fix_caption_attachment
-      review_policy: strict
-
-    - name: ocr_heavy_route
-      description: "OCR-first route for scanned documents"
-      file_types: ["application/pdf", "image/png", "image/jpeg"]
-      requires_ocr: true
-      primary_parser: paddleocr
-      fallback_parsers: [tesseract]
-      expected_risks: ["ocr_contamination", "reading_order"]
-      post_parse_repairs:
-        - normalize_headings
-        - fix_reading_order
-        - remove_headers_footers
-      review_policy: strict
-
-    - name: table_formula_route
-      description: "Specialized route for table/formula dense documents"
-      file_types: ["application/pdf"]
-      table_formula_heavy: true
-      image_heavy: false
-      primary_parser: marker
-      fallback_parsers: [pymupdf]
-      expected_risks: ["table_structure", "formula_fidelity", "caption_attachment"]
-      post_parse_repairs:
-        - normalize_tables
-        - fix_equations
-        - fix_caption_attachment
-      review_policy: strict
-
     - name: fallback_safe_route
       description: "Safe fallback when no specific route matches"
       file_types: ["application/pdf"]
-      primary_parser: pymupdf
-      fallback_parsers: [pdfplumber]
+      primary_parser: stdlib_pdf
+      fallback_parsers: [basic_text_fallback]
       expected_risks: ["generic_fallback"]
       post_parse_repairs: ["normalize_headings"]
       review_policy: strict
+
+    # Placeholder routes for future parser implementations.
+    # Uncomment and configure when the corresponding parser adapter is ready.
+    #
+    # - name: complex_pdf_route
+    #   description: "High-fidelity route for complex layouts, tables, formulas"
+    #   file_types: ["application/pdf"]
+    #   requires_ocr: false
+    #   table_formula_heavy: true
+    #   dual_column: true
+    #   primary_parser: marker
+    #   fallback_parsers: [pymupdf, pdfplumber]
+    #   expected_risks: ["cross_page_table", "formula_fidelity"]
+    #   post_parse_repairs:
+    #     - normalize_headings
+    #     - remove_headers_footers
+    #     - fix_cross_page_tables
+    #     - fix_caption_attachment
+    #   review_policy: strict
+    #
+    # - name: ocr_heavy_route
+    #   description: "OCR-first route for scanned documents"
+    #   file_types: ["application/pdf", "image/png", "image/jpeg"]
+    #   requires_ocr: true
+    #   primary_parser: paddleocr
+    #   fallback_parsers: [tesseract]
+    #   expected_risks: ["ocr_contamination", "reading_order"]
+    #   post_parse_repairs:
+    #     - normalize_headings
+    #     - fix_reading_order
+    #     - remove_headers_footers
+    #   review_policy: strict
+    #
+    # - name: table_formula_route
+    #   description: "Specialized route for table/formula dense documents"
+    #   file_types: ["application/pdf"]
+    #   table_formula_heavy: true
+    #   image_heavy: false
+    #   primary_parser: marker
+    #   fallback_parsers: [pymupdf]
+    #   expected_risks: ["table_structure", "formula_fidelity", "caption_attachment"]
+    #   post_parse_repairs:
+    #     - normalize_tables
+    #     - fix_equations
+    #     - fix_caption_attachment
+    #   review_policy: strict
 
 risk_thresholds:
   high_risk_score: 0.7

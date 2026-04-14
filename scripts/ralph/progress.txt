@@ -274,3 +274,15 @@
   - Four fixture categories now available: simple_text, dual_column_or_formula, ocr_like, table_formula
   - test_rerun_report_us008.py failures are from missing CLI rerun command (not my story)
 ---
+
+## [2026-04-15 15:20] - US-010
+- Selected SHRINK-TO-IMPLEMENTED strategy: router.yaml only references implemented parsers
+- Updated configs/router.yaml: replaced pymupdf/pdfplumber/marker/paddleocr/tesseract with stdlib_pdf and basic_text_fallback
+- Complex routes commented out as placeholders with install guidance
+- Strategy documented in router.yaml header
+- Created test file `tests/test_parser_alignment_us010.py` with 4 tests
+- **Changed files:** configs/router.yaml, tests/test_parser_alignment_us010.py (new), scripts/ralph/prd.json (passes: true)
+- **Future iteration learnings:**
+  - SHRINK-TO-IMPLEMENTED is the safer strategy — avoids runtime warnings and silent skips
+  - When adding new parser adapters: implement, register in PipelineRunner, uncomment route in router.yaml
+---
