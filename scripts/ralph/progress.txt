@@ -5,6 +5,8 @@
 - PIPELINE_STAGES in docos/models/run.py defines canonical stage order: ingest, route, parse, normalize, extract, compile, patch, lint, harness, gate.
 - Config for tests should use inline YAML strings to avoid external file dependencies.
 - Only stdlib_pdf and basic_text parsers are available in the registry; router.yaml references external parsers (pymupdf etc.) that are NOT registered.
+- ParserRouter now accepts an optional `parser_registry` parameter in __init__ for validate_config(); existing code that doesn't pass it continues to work.
+- PDF dual-column detection works by analyzing x-coordinate clusters from Td positioning commands in content streams.
 
 ## 2026-04-14 - US-001
 - Created PipelineRunner service class (docos/pipeline/runner.py) that orchestrates all 10 pipeline stages
@@ -17,5 +19,46 @@
   - PIPELINE_STAGES must be kept in sync with runner stages
   - mark_stage() raises ValueError for unknown stage names — always check the list first
   - Config for tests: use inline YAML strings, no external config files needed
+---
+
+## 2026-04-15 - US-013
+- Added `validate_config(registry)` method to ParserRouter that checks all parser names in routes against the registry
+- ParserRouter.__init__ now accepts optional `parser_registry` parameter
+- Returns list of unresolved parser names; empty list means all good
+- 6 tests: valid config, constructor registry, invalid config, mixed, no-registry, dedup
+- **Files changed:** docos/pipeline/router.py, tests/test_router_config_validation_us013.py (new), scripts/ralph/prd.json
+- **Future iterations learning:**
+  - ParserRouter constructor now has optional parser_registry kwarg; don't break callers that omit it
+---
+
+## 2026-04-15 - US-014
+- Updated pyproject.toml parser extras with comments documenting the strategy (stdlib_pdf/built-in vs external)
+- Added `_missing_parser_message()` helper in orchestrator.py with parser-name-to-extra mapping
+- Error messages now include install hints like "pip install docos[parser]" or fallback to pyproject.toml reference
+- 5 tests: known parser hint, OCR parser hint, unknown parser hint, orchestrator failure, orchestrator unknown
+- **Files changed:** docos/pipeline/orchestrator.py, pyproject.toml, tests/test_parser_extras_us014.py (new), scripts/ralph/prd.json
+---
+
+## 2026-04-15 - US-015
+- Replaced `_detect_dual_column()` stub with real implementation using x-coordinate cluster analysis
+- Extracts Td positioning commands from PDF content streams, groups by page, checks for two distinct column clusters
+- Heuristic: two x-clusters with gap > 20 points, each cluster having >= 2 positions
+- 5 tests: dual-column PDF, single-column PDF, minimal PDF, non-PDF, deterministic
+- **Files changed:** docos/pipeline/signal_extractor.py, tests/test_dual_column_us015.py (new), scripts/ralph/prd.json
+---
+
+## 2026-04-15 - US-016
+- Added `is_formula_heavy` scoring to `_score_route()`: routes with `table_formula_heavy=True` gain +1 when `is_formula_heavy=True`
+- Updated `_build_decision()` to include `is_formula_heavy` in matched_signals
+- 4 tests: formula selects formula route, non-formula selects text route, score increases, logged in signals
+- **Files changed:** docos/pipeline/router.py, tests/test_formula_heavy_us016.py (new), scripts/ralph/prd.json
+---
+
+## 2026-04-15 - US-017
+- Documented `max_pages` as soft score with code comments in `_score_route()`
+- Updated `_build_decision()` to always log ALL 8 key signals (not just truthy ones)
+- Updated `RouteLogEntry.to_dict()` to include a `signals` section with all key signals
+- 5 tests: max_pages is soft, within-limit scores higher, all signals in matched, signals present when false, persisted log includes signals
+- **Files changed:** docos/pipeline/router.py, tests/test_signal_logging_us017.py (new), scripts/ralph/prd.json
 ---
 
