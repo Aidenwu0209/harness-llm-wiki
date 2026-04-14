@@ -33,22 +33,17 @@ _TEST_CONFIG_YAML = (
     "environment: local\nschema_version: '1'\n"
     "router:\n  default_route: fallback_safe_route\n  routes:\n"
     "    - name: fast_text_route\n"
-    "      description: 'Fast text extraction'\n"
+    "      description: 'Fast text extraction for simple PDFs'\n"
     "      file_types: ['application/pdf']\n"
-    "      max_pages: 50\n"
-    "      requires_ocr: false\n"
-    "      table_formula_heavy: false\n"
-    "      image_heavy: false\n"
-    "      dual_column: false\n"
+    "      max_pages: 10\n"
     "      primary_parser: stdlib_pdf\n"
     "      fallback_parsers: [basic_text_fallback]\n"
     "      expected_risks: []\n      post_parse_repairs: []\n"
     "      review_policy: default\n"
     "    - name: complex_pdf_route\n"
-    "      description: 'Complex layouts'\n"
+    "      description: 'Complex layouts with dual columns'\n"
     "      file_types: ['application/pdf']\n"
-    "      requires_ocr: false\n"
-    "      table_formula_heavy: true\n"
+    "      max_pages: 100\n"
     "      dual_column: true\n"
     "      primary_parser: stdlib_pdf\n"
     "      fallback_parsers: [basic_text_fallback]\n"
@@ -56,9 +51,10 @@ _TEST_CONFIG_YAML = (
     "      post_parse_repairs: []\n"
     "      review_policy: strict\n"
     "    - name: ocr_heavy_route\n"
-    "      description: 'OCR route'\n"
+    "      description: 'OCR route for scanned/image-heavy docs'\n"
     "      file_types: ['application/pdf', 'image/png']\n"
     "      requires_ocr: true\n"
+    "      image_heavy: true\n"
     "      primary_parser: stdlib_pdf\n"
     "      fallback_parsers: [basic_text_fallback]\n"
     "      expected_risks: []\n"
@@ -147,6 +143,10 @@ class TestFixtureRouteIntegration:
         assert decision.selected_route is not None
         # Should score well for dual_column route or fallback
         assert decision.primary_parser in ("stdlib_pdf", "basic_text_fallback")
+        assert decision.selected_route in (
+            "complex_pdf_route",
+            "fallback_safe_route",
+        )
 
     def test_ocr_like_routes_to_ocr_route(self, tmp_path: Path) -> None:
         """OCR-like fixture routes toward OCR-priority route."""
@@ -171,8 +171,8 @@ class TestFixtureRouteIntegration:
         assert signals.needs_ocr is True
         assert signals.is_scanned is True
         assert signals.is_image_heavy is True
-        # The OCR route should score highly (requires_ocr matches)
-        assert decision.selected_route in ("ocr_heavy_route", "fast_text_route", "fallback_safe_route")
+        # The OCR route should score highly (requires_ocr + image_heavy match)
+        assert decision.selected_route in ("ocr_heavy_route", "fallback_safe_route")
 
     def test_three_fixtures_hit_different_routes(self, tmp_path: Path) -> None:
         """At least three fixture categories produce different route scores."""
@@ -201,9 +201,9 @@ class TestFixtureRouteIntegration:
             decision = router.route(source, signals)
             routes_hit.add(decision.selected_route)
 
-        # We need at least 1 different route (some may share fallback_safe_route)
-        # The key assertion: all three can be routed
-        assert len(routes_hit) >= 1
+        # At least 2 different routes must be hit (ideally 3, but signal
+        # extraction heuristics may vary across environments).
+        assert len(routes_hit) >= 2, f"Only hit {routes_hit}, expected >= 2 distinct routes"
 
 
 class TestFixtureParseIntegration:
