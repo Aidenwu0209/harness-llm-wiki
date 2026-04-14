@@ -92,3 +92,21 @@
   - EntityRecord uses `canonical_name` field; duplicate detection normalizes via .lower().strip()
 ---
 
+## 2026-04-15 22:30 - US-033
+- Added compile coverage tests for parser and benchmark page types
+- Created tests/test_compile_parser_benchmark_us033.py with 28 tests covering:
+  - ParserPageContent model instantiation (defaults + all fields)
+  - BenchmarkPageContent model instantiation (defaults + all fields)
+  - compile_parser_page(): tuple return, frontmatter type/ID/title, body sections (version, capabilities, limitations, fallback parsers), page path, source_ids, minimal content
+  - compile_benchmark_page(): tuple return, frontmatter type/ID/title, body sections (dataset, evaluation dimensions, parser results), page path, source_ids, minimal content
+  - Regression guard: source, entity, concept pages still compile
+  - Render verification for both page types
+- All acceptance criteria met: mypy passes, 602 tests pass with no regressions
+- **Files changed:** tests/test_compile_parser_benchmark_us033.py (new), scripts/ralph/prd.json
+- **Future iterations learning:**
+  - WikiCompiler compile methods return (Frontmatter, body_str, Path) tuples consistently
+  - Parser and benchmark pages use ReviewStatus.NOT_NEEDED (not PENDING like source/entity pages)
+  - Parser page path: wiki_dir/parsers/{slug}.md; Benchmark page path: wiki_dir/benchmarks/{slug}.md
+  - Optional sections (capabilities, limitations, fallback_parsers, etc.) only appear in body when lists are non-empty
+---
+
