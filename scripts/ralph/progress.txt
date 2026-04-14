@@ -65,3 +65,25 @@
   - ClaimRecord.model_construct() bypasses pydantic validation — useful for injecting bad data in tests
   - DocIR.confidence is mutable after construction, allowing test manipulation
 ---
+
+## [2026-04-15 14:20] - US-004
+- Ingest persists: raw source copy (raw/<source_id>/original.pdf), source registry record (registry/records/<source_id>.json), content hash (raw/<source_id>/metadata.json)
+- Route persists: route_decision.json (routes/<run_id>.json), route log with signals (route_logs/route_<source_id>.json), scoring details (route_scores in route log)
+- RunManifest links to route_artifact_path, source_id, source_file_path
+- Created test file `tests/test_ingest_route_artifacts_us004.py` with 8 tests
+- **Changed files:** tests/test_ingest_route_artifacts_us004.py (new), scripts/ralph/prd.json (passes: true)
+---
+
+## [2026-04-15 10:45] - US-013
+- Added RouteAuditEntry dataclass for per-route score tracking
+- Added route_scores field to RouteDecision for storing all candidate route scores, accepted/rejected status, and rejection reasons
+- Updated _match_route() to return audit trail alongside the best route
+- Updated _build_decision() to accept and store audit entries
+- Updated RouteLogEntry.to_dict() to include route_scores in JSON output
+- max_pages is documented in code as soft score (not hard filter)
+- Test file: tests/test_max_pages_audit_us013.py (9 tests)
+- **Changed files:** docos/pipeline/router.py, tests/test_max_pages_audit_us013.py, scripts/ralph/prd.json
+- **Future iteration learnings:**
+  - RouteDecision now has a route_scores list of RouteAuditEntry objects
+  - _match_route returns tuple (ParserRoute | None, list[RouteAuditEntry])
+---
