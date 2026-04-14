@@ -34,6 +34,9 @@ from docos.models.page import (
 from docos.models.patch import Change, ChangeType, Patch
 from docos.models.source import SourceRecord
 
+# Sentinel for deleted pages
+_DELETED_BODY = "__DELETED_PAGE__"
+
 
 # ---------------------------------------------------------------------------
 # Compiled page result
@@ -49,30 +52,53 @@ class CompiledPage:
         page_path: Path,
         run_id: str = "",
         existing_body: str | None = None,
+        deleted: bool = False,
     ) -> None:
         self.frontmatter = frontmatter
         self.body = body
         self.page_path = page_path
         self.run_id = run_id
         self.existing_body = existing_body
+        self.deleted = deleted
 
-    def compute_patch(self, run_id: str = "", source_id: str = "") -> Patch | None:
+    def compute_patch(self, run_id: str = "", source_id: str = "") -> Patch:
         """Compute a patch diff against existing page content.
 
-        Returns None if this is a new page (no existing content).
+        Returns a CREATE_PAGE patch for a new page, an UPDATE_PAGE patch
+        for changed existing content, or a DELETE_PAGE patch when the
+        page should be removed.
         """
-        if self.existing_body is None:
-            return None
+        import hashlib
 
-        change_type = ChangeType.UPDATE_PAGE
+        content_for_hash = self.body
+        if self.deleted:
+            change_type = ChangeType.DELETE_PAGE
+            summary = "Page deletion"
+        elif self.existing_body is None:
+            change_type = ChangeType.CREATE_PAGE
+            summary = "New page creation"
+        else:
+            change_type = ChangeType.UPDATE_PAGE
+            summary = "Page content update"
+
+        # Deterministic hash from canonical content
+        content_hash = hashlib.sha256(content_for_hash.encode()).hexdigest()[:12]
+        patch_id = f"pat_{self.frontmatter.id}_{content_hash}"
+
+        risk = 0.0
+        if self.deleted:
+            risk = 0.5
+        elif self.existing_body is not None:
+            risk = 0.3
+
         return Patch(
-            patch_id=f"pat_{self.frontmatter.id}_{hash(self.body) % 1000000:06d}",
+            patch_id=patch_id,
             run_id=run_id,
             source_id=source_id,
             changes=[
-                Change(type=change_type, target=str(self.page_path), summary="Page content update"),
+                Change(type=change_type, target=str(self.page_path), summary=summary),
             ],
-            risk_score=0.3 if self.existing_body else 0.0,
+            risk_score=risk,
         )
 
     @property

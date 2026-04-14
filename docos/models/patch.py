@@ -24,6 +24,7 @@ class ChangeType(str, Enum):
 
     CREATE_PAGE = "create_page"
     UPDATE_PAGE = "update_page"
+    DELETE_PAGE = "delete_page"
     SPLIT_PAGE = "split_page"
     MERGE_PAGE = "merge_page"
     ADD_CLAIM = "add_claim"
