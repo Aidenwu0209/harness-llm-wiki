@@ -62,3 +62,19 @@
 - **Files changed:** docos/pipeline/router.py, tests/test_signal_logging_us017.py (new), scripts/ralph/prd.json
 ---
 
+## 2026-04-15 - US-023
+- WikiLinter.lint() loads real wiki pages (Frontmatter), claims (ClaimRecord), entities (EntityRecord), DocIR, Patch, and page bodies
+- Tests verify lint processes real persisted artifacts loaded from disk (WikiStore, KnowledgeStore, PatchStore) not empty placeholders
+- Synthetic bad patch with SUPPORTED claim lacking evidence anchors produces P1 blocking finding (UNSUPPORTED_CLAIM_NO_EVIDENCE)
+- Duplicate entity candidates detected via case-insensitive canonical_name matching (DUPLICATE_ENTITY_CANDIDATES)
+- Broken wikilinks in page bodies detected (BROKEN_WIKILINK)
+- High blast radius patch without review_required triggers HIGH_BLAST_NO_REVIEW
+- 5 tests: real DocIR+knowledge, persisted artifact round-trip, bad claim detection, duplicate entities, broken wikilinks
+- **Files changed:** tests/test_lint_real_us023.py (existing), scripts/ralph/progress.txt
+- **Future iterations learning:**
+  - ClaimRecord model_validator enforces evidence for SUPPORTED claims at construction; use `model_construct()` to bypass for testing bad data
+  - EntityRecord uses `canonical_name` field (not `name`); ClaimRecord uses `statement` field (not `object`)
+  - WikiLinter._lint_body() only runs when page_bodies dict is provided; it checks wikilinks, anchors, and schema-body mismatch
+  - WikiLinter._lint_operational() checks patch blast_radius.pages > 3 without review_required
+---
+
