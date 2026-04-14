@@ -95,6 +95,16 @@ class RouteLogEntry:
             "matched_signals": self.decision.matched_signals,
             "decision_reason": self.decision.decision_reason,
             "decided_at": self.decision.decided_at.isoformat(),
+            "signals": {
+                "file_type": self.signals.file_type,
+                "page_count": self.signals.page_count,
+                "needs_ocr": self.signals.needs_ocr,
+                "is_scanned": self.signals.is_scanned,
+                "is_dual_column": self.signals.is_dual_column,
+                "is_table_heavy": self.signals.is_table_heavy,
+                "is_formula_heavy": self.signals.is_formula_heavy,
+                "is_image_heavy": self.signals.is_image_heavy,
+            },
         }
 
 
@@ -203,6 +213,10 @@ class ParserRouter:
         if route.dual_column is not None and signals.is_dual_column == route.dual_column:
             soft_score += 1
 
+        # max_pages is a soft score: routes gain a point when the document's
+        # page count fits within the route's limit.  It does NOT act as a
+        # hard filter — documents exceeding max_pages simply do not earn this
+        # bonus point, so other routes may score higher.
         if route.max_pages is not None and signals.page_count <= route.max_pages:
             soft_score += 1
 
@@ -219,20 +233,22 @@ class ParserRouter:
         return soft_score
 
     def _build_decision(self, route: ParserRoute, signals: DocumentSignals) -> RouteDecision:
-        """Build a RouteDecision from a matched route and signals."""
-        matched: dict[str, Any] = {}
-        if signals.is_table_heavy:
-            matched["table_formula_heavy"] = True
-        if signals.is_formula_heavy:
-            matched["is_formula_heavy"] = True
-        if signals.is_dual_column:
-            matched["dual_column"] = True
-        if signals.needs_ocr:
-            matched["needs_ocr"] = True
-        if signals.is_scanned:
-            matched["is_scanned"] = True
-        matched["page_count"] = signals.page_count
-        matched["file_type"] = signals.file_type
+        """Build a RouteDecision from a matched route and signals.
+
+        All key signals are always recorded in ``matched_signals`` so that
+        route logs are fully explainable without needing to look elsewhere.
+        """
+        matched: dict[str, Any] = {
+            # Core signals — always present
+            "file_type": signals.file_type,
+            "page_count": signals.page_count,
+            "needs_ocr": signals.needs_ocr,
+            "is_scanned": signals.is_scanned,
+            "is_dual_column": signals.is_dual_column,
+            "is_table_heavy": signals.is_table_heavy,
+            "is_formula_heavy": signals.is_formula_heavy,
+            "is_image_heavy": signals.is_image_heavy,
+        }
 
         reason = f"Matched route '{route.name}'"
         if route.expected_risks:
