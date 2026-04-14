@@ -71,7 +71,6 @@
         "Typecheck passes"
       ],
       "priority": 4,
-      "passes": false,
       "notes": "",
       "retryCount": 0,
       "blocked": false
@@ -108,7 +107,6 @@
         "Typecheck passes"
       ],
       "priority": 6,
-      "passes": false,
       "notes": "",
       "retryCount": 0,
       "blocked": false
@@ -180,7 +178,7 @@
         "Typecheck passes"
       ],
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
