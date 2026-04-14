@@ -183,7 +183,7 @@ class TestArtifactPersistence:
         assert manifest is not None
         # Debug artifact path may be set during parse stage
         if manifest.debug_artifact_path:
-            assert Path(manifest.debug_artifact_path).exists() or True  # path should be valid
+            assert Path(manifest.debug_artifact_path).exists()
 
     def test_no_stage_result_only_in_memory(self, tmp_path: Path) -> None:
         """Verify key artifacts exist on disk, not just in memory."""

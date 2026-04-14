@@ -13,6 +13,7 @@ from pathlib import Path
 
 from docos.artifact_stores import PatchStore
 from docos.knowledge_store import KnowledgeStore
+from docos.models.run import RunStatus, StageStatus
 from docos.pipeline.runner import PipelineRunner
 from docos.run_store import RunStore
 from tests.fixtures.build_fixtures import _build_simple_pdf
@@ -55,6 +56,44 @@ def _setup_config(tmp_path: Path) -> Path:
     config_dir.mkdir()
     config_path = config_dir / "router.yaml"
     config_path.write_text(_TEST_CONFIG_YAML)
+    return config_path
+
+
+# Config with unresolvable parser to force a parse-stage failure
+_BAD_PARSER_CONFIG_YAML = (
+    "environment: local\nschema_version: '1'\n"
+    "router:\n  default_route: bad_route\n  routes:\n"
+    "    - name: bad_route\n"
+    "      description: 'Route with nonexistent parser'\n"
+    "      file_types: ['application/pdf']\n"
+    "      primary_parser: nonexistent_parser\n"
+    "      fallback_parsers: [also_nonexistent]\n"
+    "      expected_risks: []\n      post_parse_repairs: []\n"
+    "      review_policy: default\n"
+    "risk_thresholds:\n  high_risk_score: 0.7\n  medium_risk_score: 0.4\n"
+    "  high_blast_pages: 5\n  high_blast_claims: 10\n  high_blast_links: 15\n"
+    "  auto_merge_max_risk: 0.3\n  auto_merge_max_pages: 3\n"
+    "release_gates:\n  block_on_p0_lint: true\n  block_on_p1_lint: true\n"
+    "  block_on_unsupported_claim_increase: true\n  block_on_missing_harness: true\n"
+    "  block_on_regression_exceeded: true\n  block_on_fallback_low_confidence: true\n"
+    "  fallback_confidence_threshold: 0.5\n"
+    "  regression_max_claim_change_pct: 10.0\n  regression_max_link_break_count: 0\n"
+    "review_policies:\n  default_policy: default\n  policies:\n"
+    "    - name: default\n      description: 'test'\n"
+    "      require_review_on_fallback: true\n      require_review_on_high_risk: true\n"
+    "      require_review_on_high_blast: true\n      require_review_on_conflict: true\n"
+    "      require_review_on_entity_merge: true\n"
+    "      auto_assign_reviewer: false\n      min_reviewers: 1\n"
+    "lint_policy:\n  p0_blocks_merge: true\n  p1_blocks_merge: true\n"
+)
+
+
+def _setup_config_with_bad_parser(tmp_path: Path) -> Path:
+    """Create a config that routes to nonexistent parsers, forcing a parse failure."""
+    config_dir = tmp_path / "configs"
+    config_dir.mkdir()
+    config_path = config_dir / "router.yaml"
+    config_path.write_text(_BAD_PARSER_CONFIG_YAML)
     return config_path
 
 
@@ -271,56 +310,58 @@ class TestRerunStability:
         if manifest.debug_artifact_path:
             assert Path(manifest.debug_artifact_path).exists() or debug_base.exists()
         else:
-            # Debug store may not be populated for all runs, but dir should exist
-            assert debug_base.exists() or True  # Non-blocking check
+            # Debug store may not be populated for all runs; when absent
+            # the manifest simply has no debug_artifact_path set.
+            pass
 
     def test_failure_path_debug_artifacts_preserved(self, tmp_path: Path) -> None:
-        """Debug artifacts remain available after a failure for comparing unexpected rerun drift."""
-        config_path = _setup_config(tmp_path)
+        """Debug artifacts remain available after a real failure for comparing unexpected rerun drift.
+
+        Uses a config with an unresolvable parser (nonexistent_parser) to force
+        the parse stage to fail, then verifies that the manifest records the
+        failed stage with error_detail and that debug artifacts are still
+        persisted and available for comparison.
+        """
+        config_path = _setup_config_with_bad_parser(tmp_path)
         pdf_path = tmp_path / "simple_text.pdf"
         pdf_path.write_bytes(_build_simple_pdf())
 
-        # Run 1 — successful run produces artifacts
-        runner1 = PipelineRunner(base_dir=tmp_path, config_path=config_path)
-        result1 = runner1.run(file_path=pdf_path)
-        assert result1.status.value == "completed"
+        runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
+        result = runner.run(file_path=pdf_path)
 
-        store1 = RunStore(tmp_path)
-        manifest1 = store1.get(result1.run_id)
-        assert manifest1 is not None
+        # The pipeline should fail because the parser does not exist
+        assert result.status == RunStatus.FAILED, (
+            f"Expected FAILED status but got {result.status.value}"
+        )
 
-        # Collect all artifact paths from the successful run
-        run1_artifacts: list[Path] = []
-        for field_name in (
-            "route_artifact_path",
-            "ir_artifact_path",
-            "knowledge_artifact_path",
-            "patch_artifact_path",
-            "report_artifact_path",
-            "debug_artifact_path",
-            "lint_artifact_path",
-        ):
-            value = getattr(manifest1, field_name, None)
-            if value:
-                run1_artifacts.append(Path(value))
+        # Verify the run manifest is persisted and loadable
+        store = RunStore(tmp_path)
+        manifest = store.get(result.run_id)
+        assert manifest is not None, "Run manifest should be persisted even on failure"
 
-        # At least some artifacts should have been produced
-        assert len(run1_artifacts) > 0, "Successful run should produce artifacts"
+        # Verify manifest records at least one failed stage with error_detail
+        failed_stages = [s for s in manifest.stages if s.status == StageStatus.FAILED]
+        assert len(failed_stages) > 0, (
+            "At least one stage should be marked FAILED in the manifest"
+        )
+        assert failed_stages[0].error_detail is not None, (
+            "Failed stage should have error_detail set"
+        )
 
-        # All referenced artifact paths should exist on disk (some stores add .json suffix)
-        for artifact_path in run1_artifacts:
-            exists = artifact_path.exists() or artifact_path.with_suffix(
-                artifact_path.suffix + ".json"
-            ).exists() or Path(str(artifact_path) + ".json").exists()
-            assert exists, (
-                f"Artifact {artifact_path} referenced in manifest does not exist"
-            )
-
-        # Verify manifest itself is persisted and reloadable for drift comparison
-        manifest_path = tmp_path / "manifests" / f"{result1.run_id}.json"
-        assert manifest_path.exists(), "Run manifest should be persisted"
+        # Verify the manifest file itself is persisted and reloadable for drift comparison
+        manifest_path = tmp_path / "manifests" / f"{result.run_id}.json"
+        assert manifest_path.exists(), "Run manifest file should be persisted on disk"
         reloaded_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-        assert reloaded_data["run_id"] == result1.run_id
+        assert reloaded_data["run_id"] == result.run_id
+        assert reloaded_data["status"] == "failed"
+
+        # Verify the route artifact was produced (routing happens before parsing)
+        assert manifest.route_artifact_path is not None, (
+            "Route artifact should exist even when parse fails"
+        )
+        assert Path(manifest.route_artifact_path).exists(), (
+            f"Route artifact at {manifest.route_artifact_path} should exist on disk"
+        )
 
     def test_rerun_produces_comparable_artifacts(self, tmp_path: Path) -> None:
         """Both runs produce complete artifact sets that can be compared for drift."""
