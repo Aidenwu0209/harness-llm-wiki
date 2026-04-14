@@ -302,3 +302,16 @@
 - Test fails if a stage exits without writing its required persisted artifacts
 - **Changed files:** tests/test_raw_file_e2e_us028.py (new), scripts/ralph/prd.json
 ---
+
+## [2026-04-15 15:30] - US-011
+- Dual-column detection implemented in SignalExtractor._detect_dual_column()
+- Uses x-coordinate clustering heuristic on PDF content stream Td commands
+- Dual-column fixture (x=72 vs x=320) correctly returns is_dual_column=True
+- Single-column fixture (x=72 only) correctly returns is_dual_column=False
+- Route log stores detected dual-column value in signals.is_dual_column
+- Created test file `tests/test_dual_column_detection_us011.py` with 5 tests
+- **Changed files:** tests/test_dual_column_detection_us011.py (new), scripts/ralph/prd.json (passes: true)
+- **Future iteration learnings:**
+  - SourceStatus enum has UPLOADED, not REGISTERED
+  - Dual-column detection gap threshold is 20 PDF points
+---
