@@ -315,3 +315,16 @@
   - SourceStatus enum has UPLOADED, not REGISTERED
   - Dual-column detection gap threshold is 20 PDF points
 ---
+
+## [2026-04-15 19:00] - US-029
+- Created test file tests/test_fallback_rerun_us029.py (12 tests)
+- Fallback test: config with nonexistent primary parser + basic_text_fallback succeeds
+- Rerun stability: stable source_id, route choice, patch_id, entity_id across two runs
+- Rerun verifies real object content (DocIR pages/blocks, knowledge entity/claim counts)
+- Debug artifacts: manifests, knowledge, patches persisted for drift comparison
+- **Changed files:** tests/test_fallback_rerun_us029.py (new), scripts/ralph/prd.json
+- **Future iteration learnings:**
+  - Fallback config: set primary_parser to nonexistent name, fallback_parsers to [basic_text_fallback]
+  - manifest.fallback_used is True when fallback parser is used
+  - test_rerun_report_us008.py and test_config.py failures are from missing CLI rerun command and config format changes (not my stories)
+---
