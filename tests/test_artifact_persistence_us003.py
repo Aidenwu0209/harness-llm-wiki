@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from docos.models.run import StageStatus
 from docos.pipeline.runner import PipelineRunner
 from docos.run_store import RunStore
 
@@ -197,3 +198,99 @@ class TestArtifactPersistence:
         assert (tmp_path / "knowledge" / result.run_id / "entities.json").exists()
         assert (tmp_path / "lint_results" / f"{result.run_id}.json").exists()
         assert (tmp_path / "reports" / f"{result.run_id}.json").exists()
+
+
+class TestFailedRunStageStatus:
+    """US-003: Explicit stage status assertions when a pipeline stage fails.
+
+    When a pipeline fails at a middle stage, stages BEFORE the failure point
+    must remain COMPLETED, the FAILED stage must be FAILED with error_detail,
+    and stages AFTER the failure point must remain PENDING (not started).
+    """
+
+    @staticmethod
+    def _make_failing_parse_config(config_dir: Path) -> Path:
+        """Create a config that routes to a nonexistent parser, causing parse to fail."""
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / "router.yaml"
+        config_path.write_text(
+            "environment: local\nschema_version: '1'\n"
+            "router:\n  default_route: bad_route\n  routes:\n"
+            "    - name: bad_route\n      description: 'test'\n"
+            "      file_types: ['application/pdf']\n"
+            "      primary_parser: nonexistent_parser\n      fallback_parsers: []\n"
+            "      expected_risks: []\n      post_parse_repairs: []\n"
+            "      review_policy: default\n"
+            "risk_thresholds:\n  high_risk_score: 0.7\n  medium_risk_score: 0.4\n"
+            "  high_blast_pages: 5\n  high_blast_claims: 10\n  high_blast_links: 15\n"
+            "  auto_merge_max_risk: 0.3\n  auto_merge_max_pages: 3\n"
+            "release_gates:\n  block_on_p0_lint: true\n  block_on_p1_lint: true\n"
+            "  block_on_unsupported_claim_increase: true\n  block_on_missing_harness: true\n"
+            "  block_on_regression_exceeded: true\n  block_on_fallback_low_confidence: true\n"
+            "  fallback_confidence_threshold: 0.5\n"
+            "  regression_max_claim_change_pct: 10.0\n  regression_max_link_break_count: 0\n"
+            "review_policies:\n  default_policy: default\n  policies:\n"
+            "    - name: default\n      description: 'test'\n"
+            "      require_review_on_fallback: true\n      require_review_on_high_risk: true\n"
+            "      require_review_on_high_blast: true\n      require_review_on_conflict: true\n"
+            "      require_review_on_entity_merge: true\n"
+            "      auto_assign_reviewer: false\n      min_reviewers: 1\n"
+            "lint_policy:\n  p0_blocks_merge: true\n  p1_blocks_merge: true\n"
+        )
+        return config_path
+
+    def test_failed_run_early_stages_completed_later_pending(self, tmp_path: Path) -> None:
+        """When parse fails, ingest+route are COMPLETED, parse is FAILED, rest are PENDING."""
+        config_path = self._make_failing_parse_config(tmp_path / "configs")
+        pdf_path = _write_simple_pdf(tmp_path / "test.pdf")
+        runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
+        result = runner.run(file_path=pdf_path)
+
+        # The pipeline must have failed
+        assert result.status.value == "failed"
+        assert result.failed_stage == "parse"
+        assert result.error_detail is not None
+
+        # Load the persisted manifest
+        store = RunStore(tmp_path)
+        manifest = store.get(result.run_id)
+        assert manifest is not None
+
+        # Build ordered stage list for clarity
+        stages_before_failure = ("ingest", "route")
+        failed_stage = "parse"
+        stages_after_failure = (
+            "normalize", "extract", "compile", "patch", "lint", "harness", "gate",
+        )
+
+        for stage in manifest.stages:
+            if stage.name in stages_before_failure:
+                assert stage.status == StageStatus.COMPLETED, (
+                    f"Stage '{stage.name}' before failure should be COMPLETED, "
+                    f"got {stage.status.value}"
+                )
+            elif stage.name == failed_stage:
+                assert stage.status == StageStatus.FAILED, (
+                    f"Failed stage '{stage.name}' should be FAILED, "
+                    f"got {stage.status.value}"
+                )
+                assert stage.error_detail is not None, (
+                    f"Failed stage '{stage.name}' must have error_detail set"
+                )
+                assert stage.completed_at is not None, (
+                    f"Failed stage '{stage.name}' must have completed_at set"
+                )
+            elif stage.name in stages_after_failure:
+                assert stage.status == StageStatus.PENDING, (
+                    f"Stage '{stage.name}' after failure should be PENDING, "
+                    f"got {stage.status.value}"
+                )
+                assert stage.started_at is None, (
+                    f"Stage '{stage.name}' after failure should not have started_at"
+                )
+                assert stage.completed_at is None, (
+                    f"Stage '{stage.name}' after failure should not have completed_at"
+                )
+                assert stage.error_detail is None, (
+                    f"Stage '{stage.name}' after failure should not have error_detail"
+                )
