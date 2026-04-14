@@ -152,20 +152,57 @@ class SignalExtractor:
         return False
 
     def _detect_dual_column(self, file_path: Path, mime_type: str) -> bool:
-        """Detect dual-column layout (heuristic)."""
-        # Without a full PDF parser, this is a conservative heuristic
-        # based on file size vs page count ratio
+        """Detect dual-column layout by analyzing x-coordinate clusters in content streams.
+
+        Strategy:
+        1. Extract text-positioning commands (``x y Td``) from PDF content streams.
+        2. Group positions by page (each ``stream`` roughly corresponds to a page).
+        3. On each page, look for two distinct clusters of x-coordinates.
+        4. If at least one page has two clear left/right x-clusters, return True.
+        """
         if mime_type != "application/pdf":
             return False
-        page_count = self._pdf_page_count(file_path)
-        if page_count <= 0:
+        try:
+            raw = file_path.read_bytes()
+            streams = re.findall(rb"stream\r?\n(.*?)\r?\nendstream", raw, re.DOTALL)
+            if not streams:
+                return False
+
+            for stream in streams:
+                # Extract Td positioning commands: "x y Td"
+                positions = re.findall(rb"([\d.]+)\s+([\d.]+)\s+Td", stream)
+                if len(positions) < 4:
+                    continue
+
+                x_values: list[float] = [float(p[0]) for p in positions]
+                # Use a simple 2-cluster heuristic: check if x-values split
+                # into two groups separated by a gap.
+                if not x_values:
+                    continue
+                x_min = min(x_values)
+                x_max = max(x_values)
+                x_range = x_max - x_min
+                if x_range < 50:
+                    continue  # too narrow to be dual-column
+
+                # Split at the midpoint and count members
+                mid = x_min + x_range / 2
+                left_count = sum(1 for x in x_values if x < mid)
+                right_count = sum(1 for x in x_values if x >= mid)
+
+                # Both columns must have meaningful content
+                if left_count >= 2 and right_count >= 2:
+                    # Check that there's a clear gap: the max of left cluster
+                    # is well separated from the min of the right cluster
+                    left_xs = sorted(x for x in x_values if x < mid)
+                    right_xs = sorted(x for x in x_values if x >= mid)
+                    gap = right_xs[0] - left_xs[-1]
+                    if gap > 20:  # minimum gap in points
+                        return True
+
             return False
-        byte_size = file_path.stat().st_size
-        # Academic PDFs tend to be larger per page in dual-column format
-        bytes_per_page = byte_size / page_count
-        # Rough heuristic: dual-column PDFs often have denser text
-        # This is intentionally conservative (returns None-like=False)
-        return False
+        except Exception:
+            return False
 
     def _detect_table_heavy(self, file_path: Path, mime_type: str) -> bool:
         """Detect if a PDF is table-heavy."""
