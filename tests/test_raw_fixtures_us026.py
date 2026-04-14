@@ -90,17 +90,18 @@ class TestRawFixtures:
             bf.FIXTURES_DIR = original_dir
 
     def test_get_all_fixtures_returns_three(self, tmp_path: Path) -> None:
-        """get_all_fixtures() returns all three fixture types."""
+        """get_all_fixtures() returns all fixture types."""
         import tests.fixtures.build_fixtures as bf
 
         original_dir = bf.FIXTURES_DIR
         bf.FIXTURES_DIR = tmp_path
         try:
             fixtures = get_all_fixtures()
-            assert len(fixtures) == 3
+            assert len(fixtures) == 4
             assert "simple_text" in fixtures
             assert "dual_column_or_formula" in fixtures
             assert "ocr_like" in fixtures
+            assert "table_formula" in fixtures
             for name, path in fixtures.items():
                 assert path.exists(), f"Fixture {name} does not exist at {path}"
         finally:
