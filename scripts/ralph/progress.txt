@@ -126,3 +126,50 @@
   - schemas/ directory was pre-existing but empty; schema files go there
 ---
 
+
+## 2026-04-15 - US-018 through US-025 batch
+
+### US-018: Generate patches for create, update, and delete page changes
+- CompiledPage.compute_patch() now returns CREATE_PAGE, UPDATE_PAGE, or DELETE_PAGE patches
+- Added DELETE_PAGE to ChangeType enum; CompiledPage accepts `deleted` flag
+- compute_patch() always returns a Patch (never None)
+- **Files changed:** docos/models/patch.py, docos/wiki/compiler.py, tests/test_patch_types_us018.py
+
+### US-019: Make patch IDs deterministic from canonical content
+- Patch IDs now use SHA-256 hash (first 12 hex chars) of canonical content instead of Python hash()
+- Same content always produces same patch_id; format: pat_{page_id}_{sha256_hash}
+- **Files changed:** tests/test_patch_deterministic_us019.py
+
+### US-020: Implement patch apply and merge lifecycle steps
+- Created PatchService (docos/wiki/patch_service.py) coordinating lifecycle with persisted state
+- apply_patch, auto_merge, approve_merge all persist via PatchStore and snapshot wiki state via WikiStore
+- **Files changed:** docos/wiki/patch_service.py, tests/test_patch_lifecycle_us020.py
+
+### US-021: Implement patch rollback and reject lifecycle steps
+- PatchService.rollback() restores prior wiki state; reject() keeps patch auditable
+- **Files changed:** tests/test_patch_rollback_us021.py
+
+### US-022: Link review items to concrete patch IDs
+- ReviewItem.target_object_id stores patch_id; ReviewAction.linked_patch_id links actions
+- **Files changed:** tests/test_review_patch_link_us022.py
+
+### US-023: Make lint load real wiki, knowledge, and patch artifacts
+- Fixed PipelineRunner._stage_lint() to load real wiki pages from WikiStore (was passing pages=[])
+- **Files changed:** docos/pipeline/runner.py, tests/test_lint_real_artifacts_us023.py
+
+### US-024: Make harness consume real parse and knowledge artifacts
+- Tests verify harness reads real DocIR, claims, entities, patches and produces metrics
+- **Files changed:** tests/test_harness_real_artifacts_us024.py
+
+### US-025: Enforce release gate rules and report gate decisions
+- ReleaseGate.check() already fully implemented; tests already present
+- **Files changed:** scripts/ralph/prd.json
+
+- **Future iterations learning:**
+  - DocIR requires `doc_id` field (not just source_id)
+  - EvidenceAnchor requires anchor_id, source_id, doc_id as required fields
+  - ClaimRecord with SUPPORTED status MUST have evidence_anchors (model_validator enforces)
+  - HarnessRunner citation coverage counts ALL claims; ensure all have evidence for 95%+ threshold
+  - Patch.stage() recalculates review_required; manual setting gets overridden
+  - WikiStore uses sanitized page_path as key (slashes to underscores)
+---
