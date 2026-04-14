@@ -137,3 +137,36 @@
   - RunManifest now has gate_blockers and release_reasoning lists alongside gate_decision
   - Gate decision artifacts stored in <base>/gate_decisions/<run_id>.json
 ---
+
+## [2026-04-15 11:15] - US-017
+- Verified CREATE_PAGE patches already implemented in CompiledPage.compute_patch()
+- compute_patch returns CREATE_PAGE when existing_body is None (new page)
+- Patch stores target page path, source_id, run_id, and content summary
+- Tests in test_patch_types_us018.py cover create, update, and delete patch generation
+- **Changed files:** scripts/ralph/prd.json (set passes: true)
+---
+
+## [2026-04-15 11:20] - US-018
+- Verified UPDATE_PAGE and DELETE_PAGE patches already implemented
+- UPDATE_PAGE when existing_body has changed content (risk_score=0.3)
+- DELETE_PAGE when deleted=True flag is set (risk_score=0.5)
+- Tests in test_patch_types_us018.py cover both update and delete cases
+- **Changed files:** scripts/ralph/prd.json (set passes: true)
+---
+
+## [2026-04-15 11:25] - US-019
+- Verified patch IDs are deterministic using SHA-256 hash
+- compute_patch in compiler.py uses hashlib.sha256(body.encode()).hexdigest()[:12]
+- Same content always produces same patch_id regardless of run_id or source_id
+- Tests in test_patch_deterministic_us019.py (5 tests) verify determinism
+- **Changed files:** scripts/ralph/prd.json (set passes: true)
+---
+
+## [2026-04-15 17:00] - US-025
+- Created test file tests/test_lint_harness_joint_us025.py (9 tests)
+- ReleaseGate already implements all joint gate logic: P0 blocks, missing harness blocks, fallback blocks
+- Verified lint + harness jointly control auto-merge through real WikiLinter and ReleaseGate integration
+- Tests cover blocked cases (P0, missing harness, both fail) and review-required cases (fallback low confidence)
+- Report and manifest include final gate decision and all blocking reasons
+- **Changed files:** tests/test_lint_harness_joint_us025.py (new), scripts/ralph/prd.json
+---
