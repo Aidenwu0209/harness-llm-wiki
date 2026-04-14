@@ -97,6 +97,7 @@
     {
       "id": "US-006",
       "title": "Resolve primary and fallback parsers through the registry",
+      "passes": true,
       "description": "As a platform maintainer, I want the parser registry to resolve the configured parser chain so that parse behavior matches the route config.",
       "acceptanceCriteria": [
         "The parse stage resolves the route's `primary_parser` and `fallback_parsers` through `ParserRegistry`",
@@ -125,7 +126,7 @@
         "Typecheck passes"
       ],
       "priority": 7,
-      "passes": false,
+      "passes": true,
       "notes": "",
       "retryCount": 0,
       "blocked": false
