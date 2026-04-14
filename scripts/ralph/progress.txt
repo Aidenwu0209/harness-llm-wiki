@@ -3,6 +3,13 @@
 - The main runtime boundaries are `docos/cli`, `docos/pipeline`, `docos/wiki`, `docos/lint`, `docos/harness`, and `docos/review`; keep stories scoped to one boundary when possible.
 - Test files follow naming pattern `tests/test_<feature>_usXXX.py`
 - US-001 through US-036 features may have been implemented in a previous PRD cycle — always check existing code and tests first
+- router.yaml uses shrink-to-implemented strategy: only 2 routes (fast_text_route, fallback_safe_route) — other routes are commented out
+- RouteDecision now has route_scores list of RouteAuditEntry objects for per-route audit trail
+- CompiledPage.compute_patch() computes BlastRadius from frontmatter and risk from real difflib diffs
+- PatchService handles lifecycle: apply_patch() → auto_merge()/approve_merge() → rollback()/reject()
+- EntityRecord uses `canonical_name` field (NOT `name`)
+- Other agents may work concurrently — check for untracked test files that could break collection
+- build_fixtures.py now has 4 fixtures: simple_text, dual_column_or_formula, ocr_like, table_formula
 - Config YAML for tests: use inline strings with `environment: local\nschema_version: '1'` header
 - Registered parsers: `stdlib_pdf` and `basic_text_fallback` (NOT "basic_text")
 - PIPELINE_STAGES: ingest, route, parse, normalize, extract, compile, patch, lint, harness, gate
