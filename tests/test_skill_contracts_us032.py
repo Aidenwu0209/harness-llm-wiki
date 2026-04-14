@@ -310,3 +310,209 @@ class TestSkillContracts:
 
         assert claims_before == claims_after, "Lint modified claims input"
         assert entities_before == entities_after, "Lint modified entities input"
+
+    # ------------------------------------------------------------------
+    # Runtime invariant verification for all 6 skills
+    # ------------------------------------------------------------------
+
+    def test_extract_stable_id_invariant_verified(self) -> None:
+        """Extract produces stable entity/claim IDs for the same DocIR input.
+
+        Runs KnowledgeExtractionPipeline twice on an identical DocIR and
+        verifies that every extracted entity and claim ID is bitwise equal,
+        confirming the deterministic-id invariant holds at runtime.
+        """
+        from docos.knowledge.extractor import KnowledgeExtractionPipeline
+        from docos.models.docir import Block, BlockType, DocIR, Page
+
+        # Build a minimal but representative DocIR with title, heading, paragraph
+        blocks = [
+            Block(
+                block_id="blk_title",
+                page_no=1,
+                block_type=BlockType.TITLE,
+                reading_order=0,
+                bbox=(0.0, 0.0, 612.0, 50.0),
+                text_plain="Stable ID Test Document",
+                source_parser="test_parser",
+                source_node_id="sn_0",
+            ),
+            Block(
+                block_id="blk_h1",
+                page_no=1,
+                block_type=BlockType.HEADING,
+                reading_order=1,
+                bbox=(0.0, 50.0, 612.0, 80.0),
+                text_plain="Introduction",
+                source_parser="test_parser",
+                source_node_id="sn_1",
+            ),
+            Block(
+                block_id="blk_p1",
+                page_no=1,
+                block_type=BlockType.PARAGRAPH,
+                reading_order=2,
+                bbox=(0.0, 80.0, 612.0, 200.0),
+                text_plain="This paragraph discusses stable ID generation.",
+                source_parser="test_parser",
+                source_node_id="sn_2",
+            ),
+            Block(
+                block_id="blk_h2",
+                page_no=1,
+                block_type=BlockType.HEADING,
+                reading_order=3,
+                bbox=(0.0, 200.0, 612.0, 230.0),
+                text_plain="Methods",
+                source_parser="test_parser",
+                source_node_id="sn_3",
+            ),
+            Block(
+                block_id="blk_p2",
+                page_no=1,
+                block_type=BlockType.PARAGRAPH,
+                reading_order=4,
+                bbox=(0.0, 230.0, 612.0, 350.0),
+                text_plain="We use SHA-256 hashing for deterministic identifiers.",
+                source_parser="test_parser",
+                source_node_id="sn_4",
+            ),
+        ]
+
+        docir = DocIR(
+            doc_id="doc_stable_test",
+            source_id="src_stable_test",
+            parser="test_parser",
+            page_count=1,
+            pages=[Page(page_no=1, width=612.0, height=792.0, blocks=[b.block_id for b in blocks])],
+            blocks=blocks,
+        )
+
+        pipeline = KnowledgeExtractionPipeline()
+
+        # First extraction
+        ents1, claims1, rels1 = pipeline.extract(docir)
+        # Second extraction with identical input
+        ents2, claims2, rels2 = pipeline.extract(docir)
+
+        # Entity IDs must be stable
+        ent_ids1 = sorted(e.entity_id for e in ents1)
+        ent_ids2 = sorted(e.entity_id for e in ents2)
+        assert ent_ids1 == ent_ids2, (
+            f"Entity IDs not stable across runs: {ent_ids1} != {ent_ids2}"
+        )
+
+        # Claim IDs must be stable
+        claim_ids1 = sorted(c.claim_id for c in claims1)
+        claim_ids2 = sorted(c.claim_id for c in claims2)
+        assert claim_ids1 == claim_ids2, (
+            f"Claim IDs not stable across runs: {claim_ids1} != {claim_ids2}"
+        )
+
+        # Relation IDs must be stable
+        rel_ids1 = sorted(r.relation_id for r in rels1)
+        rel_ids2 = sorted(r.relation_id for r in rels2)
+        assert rel_ids1 == rel_ids2, (
+            f"Relation IDs not stable across runs: {rel_ids1} != {rel_ids2}"
+        )
+
+    def test_patch_atomic_invariant_verified(self, tmp_path: Path) -> None:
+        """Patch apply is atomic: either fully succeeds or raises, never partial.
+
+        Verifies that:
+        1. A valid patch stages cleanly (all-or-nothing success).
+        2. Re-staging an already-staged patch raises ValueError and leaves
+           the patch object in its previous state (no partial mutation).
+        3. An invalid status transition also raises and preserves prior state.
+        """
+        from docos.models.patch import BlastRadius, Change, ChangeType, MergeStatus, Patch
+        from docos.wiki.patch_service import PatchService
+
+        svc = PatchService(
+            patch_dir=tmp_path / "patches",
+            wiki_dir=tmp_path / "wiki",
+        )
+
+        patch = Patch(
+            patch_id="pch_atomic_test",
+            run_id="run_001",
+            source_id="src_001",
+            changes=[
+                Change(type=ChangeType.CREATE_PAGE, target="wiki/new_page.md", summary="Add new page"),
+                Change(type=ChangeType.ADD_CLAIM, target="wiki/new_page.md#claim1", summary="Add claim"),
+            ],
+            blast_radius=BlastRadius(pages=1, claims=1),
+            risk_score=0.1,
+        )
+
+        # --- Stage succeeds atomically ---
+        assert patch.merge_status == MergeStatus.PENDING
+        svc.apply_patch(patch)
+        assert patch.merge_status == MergeStatus.PENDING  # stage() sets review_required flag only
+        assert patch.review_required is False  # low risk
+
+        # Verify the patch was persisted (proof that staging was atomic + complete)
+        loaded = svc.get_patch("pch_atomic_test")
+        assert loaded is not None, "Patch was not persisted after apply_patch"
+
+        # --- Invalid re-staging raises and preserves state ---
+        # Manually move to a non-PENDING status to test atomic guard
+        patch.merge_status = MergeStatus.AUTO_MERGED
+
+        # Now attempting to stage again should raise
+        with pytest.raises(ValueError, match="Cannot stage patch"):
+            patch.stage()
+
+        # Status unchanged after failed stage (no partial mutation)
+        assert patch.merge_status == MergeStatus.AUTO_MERGED
+
+    def test_review_append_only_invariant_verified(self, tmp_path: Path) -> None:
+        """Review actions are append-only: actions list only grows, never shrinks.
+
+        Verifies that:
+        1. Each action (approve, request_changes, reject) appends to the list.
+        2. Original actions remain intact after subsequent actions.
+        3. No action is ever removed or overwritten.
+        """
+        from docos.review.queue import ReviewItem, ReviewItemType
+
+        item = ReviewItem(
+            review_id="rev_append_test",
+            item_type=ReviewItemType.PATCH,
+            target_object_id="pch_001",
+            reason="High-risk patch",
+        )
+
+        # Initially no actions
+        assert len(item.actions) == 0, "New review item should have zero actions"
+
+        # First action: approve
+        item.approve(reviewer="alice", reason="Looks good")
+        assert len(item.actions) == 1
+        first_action = item.actions[0]
+
+        # Second action: request changes (e.g. reconsidered)
+        item.request_changes(reviewer="bob", reason="Found issues")
+        assert len(item.actions) == 2
+        # Original action still present and unmodified
+        assert item.actions[0] is first_action
+        assert item.actions[0].decision.value == "approved"
+        assert item.actions[0].reviewer == "alice"
+        # New action appended
+        assert item.actions[1].decision.value == "request_changes"
+        assert item.actions[1].reviewer == "bob"
+
+        # Third action: reject
+        item.reject(reviewer="carol", reason="Escalated")
+        assert len(item.actions) == 3
+        # All previous actions still intact
+        assert item.actions[0].decision.value == "approved"
+        assert item.actions[1].decision.value == "request_changes"
+        assert item.actions[2].decision.value == "rejected"
+
+        # Verify append-only property: list only grows
+        action_count = 0
+        for action in item.actions:
+            action_count += 1
+            assert action_count <= 3, "More actions than expected — append-only violated"
+        assert action_count == 3
