@@ -106,6 +106,19 @@ class RunStore:
             raise RunNotFoundError(run_id)
         return manifest
 
+    def get_by_source_id(self, source_id: str) -> RunManifest | None:
+        """Load a run manifest by source_id.
+
+        Scans all stored manifests and returns the first match.
+
+        Returns:
+            The manifest, or ``None`` if no run is linked to the given source_id.
+        """
+        for manifest in self.list_runs():
+            if manifest.source_id == source_id:
+                return manifest
+        return None
+
     def update(self, manifest: RunManifest) -> None:
         """Persist an updated manifest."""
         self._persist(manifest)

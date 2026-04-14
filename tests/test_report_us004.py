@@ -9,7 +9,9 @@ import pytest
 from click.testing import CliRunner
 
 from docos.cli.main import cli
+from docos.models.run import RunManifest, StageStatus
 from docos.pipeline.runner import PipelineRunner
+from docos.run_store import RunStore
 
 
 def _make_test_config(config_dir: Path) -> Path:
@@ -193,3 +195,56 @@ class TestReportFromArtifacts:
         assert output.exit_code == 1
         data = json.loads(output.output)
         assert "error" in data
+
+
+class TestSourceIdReload:
+    """US-004: Persisted route artifacts can be reloaded by source_id."""
+
+    def test_get_by_source_id_returns_manifest(self, tmp_path: Path) -> None:
+        """RunStore.get_by_source_id finds a manifest by its source_id."""
+        store = RunStore(tmp_path)
+        manifest = store.create(
+            source_id="src_reload_test",
+            source_hash="a" * 64,
+            source_file_path="/tmp/test.pdf",
+        )
+
+        # Mark a stage to prove full round-trip
+        manifest.mark_stage("ingest", StageStatus.COMPLETED)
+        store.update(manifest)
+
+        # Reload by source_id in a fresh store instance
+        store2 = RunStore(tmp_path)
+        found = store2.get_by_source_id("src_reload_test")
+        assert found is not None
+        assert found.run_id == manifest.run_id
+        assert found.source_id == "src_reload_test"
+
+        # Verify persisted stage state survived the round-trip
+        ingest = next(s for s in found.stages if s.name == "ingest")
+        assert ingest.status == StageStatus.COMPLETED
+
+    def test_get_by_source_id_returns_none_when_missing(self, tmp_path: Path) -> None:
+        """RunStore.get_by_source_id returns None for unknown source_id."""
+        store = RunStore(tmp_path)
+        assert store.get_by_source_id("src_nonexistent") is None
+
+    def test_get_by_source_id_among_multiple_runs(self, tmp_path: Path) -> None:
+        """get_by_source_id returns the correct manifest when multiple exist."""
+        store = RunStore(tmp_path)
+        m1 = store.create(
+            source_id="src_alpha",
+            source_hash="a" * 64,
+            source_file_path="/tmp/a.pdf",
+        )
+        m2 = store.create(
+            source_id="src_beta",
+            source_hash="b" * 64,
+            source_file_path="/tmp/b.pdf",
+        )
+
+        found = store.get_by_source_id("src_beta")
+        assert found is not None
+        assert found.run_id == m2.run_id
+        assert found.source_id == "src_beta"
+        assert found.run_id != m1.run_id
