@@ -74,6 +74,56 @@ def run_pipeline(file_path: str, origin: str, tags: str, config_path: str | None
         raise SystemExit(1)
 
 
+@cli.command("rerun")
+@click.argument("source_id")
+@click.option("--config", "config_path", default=None, help="Path to router.yaml config")
+def rerun_pipeline(source_id: str, config_path: str | None) -> None:
+    """Rerun the full pipeline for an existing source."""
+    from docos.pipeline.runner import PipelineRunner
+    from docos.registry import SourceRegistry
+    from docos.source_store import RawStorage
+
+    base = Path(".")
+    cfg = Path(config_path) if config_path else None
+
+    # Look up existing source
+    raw = RawStorage(base / "raw")
+    registry = SourceRegistry(base / "registry", raw)
+    source = registry.get(source_id)
+    if source is None:
+        click.echo(json.dumps({"error": f"Source not found: {source_id}"}))
+        raise SystemExit(1)
+
+    # Use the stored raw file as input
+    file_path = Path(source.raw_storage_path or source.file_name)
+    if not file_path.exists():
+        click.echo(json.dumps({"error": f"Source file not found: {file_path}"}))
+        raise SystemExit(1)
+
+    runner = PipelineRunner(base_dir=base, config_path=cfg)
+    result = runner.run(
+        file_path=file_path,
+        origin="rerun",
+        tags=[],
+    )
+
+    output: dict[str, object] = {
+        "run_id": result.run_id,
+        "source_id": result.source_id,
+        "status": result.status.value,
+        "elapsed_seconds": round(result.elapsed_seconds, 2),
+    }
+
+    if result.failed_stage:
+        output["failed_stage"] = result.failed_stage
+        output["error_detail"] = result.error_detail
+
+    click.echo(json.dumps(output, indent=2, default=str))
+
+    if result.status.value == "failed":
+        raise SystemExit(1)
+
+
 @cli.command()
 @click.argument("file_path", type=click.Path(exists=True))
 @click.option("--origin", default="cli", help="Source origin")
