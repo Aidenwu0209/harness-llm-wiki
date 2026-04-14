@@ -78,3 +78,17 @@
   - WikiLinter._lint_operational() checks patch blast_radius.pages > 3 without review_required
 ---
 
+## 2026-04-15 15:30 - US-024
+- Enhanced test_harness_linked_from_manifest to use real RunManifest with RunStore (not just simulated path check)
+- HarnessRunner.run() already consumes real DocIR, ClaimRecord, EntityRecord, and Patch artifacts from any source
+- ReportStore persists HarnessReport to disk; RunManifest.report_artifact_path links to the persisted file
+- Test verifies full round-trip: create manifest, run harness, persist report, link in manifest, reload and verify
+- 13 tests total across two US-024 test files; all pass alongside 614 total tests
+- **Files changed:** tests/test_harness_real_us024.py, scripts/ralph/prd.json
+- **Future iterations learning:**
+  - HarnessRunner.run() accepts run_id and source_id as explicit params (not from manifest); it's the pipeline runner's job to pass them
+  - HarnessReport is a dataclass (not Pydantic), serialized via _report_to_dict() helper in artifact_stores.py
+  - PipelineRunner._stage_harness() already correctly saves report via ReportStore and sets manifest.report_artifact_path
+  - EntityRecord uses `canonical_name` field; duplicate detection normalizes via .lower().strip()
+---
+
