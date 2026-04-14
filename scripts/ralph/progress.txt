@@ -110,3 +110,19 @@
   - Optional sections (capabilities, limitations, fallback_parsers, etc.) only appear in body when lists are non-empty
 ---
 
+## 2026-04-15 23:30 - US-035
+- Generated JSON Schema artifacts from Pydantic models: run.schema.json, page.schema.json, patch.schema.json
+- Created schemas/generate_schemas.py script for reproducible schema regeneration
+- Created tests/test_docs_alignment_us035.py with 13 tests covering:
+  - CLI commands documented in README are all registered (10 top-level + 3 review subcommands)
+  - Page types in code (8 types) match documented types exactly
+  - Parser names (stdlib_pdf, basic_text_fallback) match documented parsers
+  - Schema JSON files exist and are valid JSON Schema
+- All acceptance criteria met: mypy passes (41 files), 641 tests pass
+- **Files changed:** schemas/generate_schemas.py (new), schemas/run.schema.json (new), schemas/page.schema.json (new), schemas/patch.schema.json (new), tests/test_docs_alignment_us035.py (new), scripts/ralph/prd.json
+- **Future iterations learning:**
+  - Use Pydantic's model_json_schema() to generate JSON Schema artifacts; it handles enums, optionals, and nested models automatically
+  - Click CLI commands can be introspected via `cli --help` output for documentation alignment testing
+  - schemas/ directory was pre-existing but empty; schema files go there
+---
+
