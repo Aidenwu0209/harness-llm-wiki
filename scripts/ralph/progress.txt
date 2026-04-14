@@ -111,6 +111,14 @@
 - **Changed files:** docos/cli/main.py (added rerun command), tests/test_rerun_report_us008.py (new), scripts/ralph/prd.json (passes: true)
 ---
 
+## [2026-04-15 15:10] - US-009
+- ParserRouter.validate_config() checks all primary_parser and fallback_parsers against ParserRegistry
+- Unknown parser names return as unresolved list (structured validation failure)
+- Tests cover valid config, invalid primary, invalid fallback, mixed, and registry resolution
+- Created test file `tests/test_route_config_validation_us009.py` with 6 tests
+- **Changed files:** tests/test_route_config_validation_us009.py (new), scripts/ralph/prd.json (passes: true)
+---
+
 ## [2026-04-15 10:45] - US-013
 - Added RouteAuditEntry dataclass for per-route score tracking
 - Added route_scores field to RouteDecision for storing all candidate route scores, accepted/rejected status, and rejection reasons
