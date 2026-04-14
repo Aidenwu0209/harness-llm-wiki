@@ -158,8 +158,16 @@ def route(source_id: str) -> None:
 @click.argument("source_id")
 @click.option("--run-id", default=None, help="Run ID to use")
 def parse(source_id: str, run_id: str | None) -> None:
-    """Parse a source document."""
+    """Parse a source document using route + registry + orchestrator."""
+    import yaml
+    from docos.debug_store import DebugAssetStore
+    from docos.models.config import AppConfig
+    from docos.pipeline.orchestrator import PipelineOrchestrator
+    from docos.pipeline.parser import ParserRegistry
+    from docos.pipeline.parsers.basic_text import BasicTextFallbackParser
     from docos.pipeline.parsers.stdlib_pdf import StdlibPDFParser
+    from docos.pipeline.router import DocumentSignals, ParserRouter
+    from docos.pipeline.signal_extractor import SignalExtractor
     from docos.registry import SourceRegistry
     from docos.source_store import RawStorage
 
@@ -171,15 +179,48 @@ def parse(source_id: str, run_id: str | None) -> None:
         click.echo(json.dumps({"error": f"Source not found: {source_id}"}))
         raise SystemExit(1)
 
-    parser = StdlibPDFParser()
-    file_path = Path(source.raw_storage_path or source.file_name)
-    result = parser.parse(file_path)
+    # Load config and route
+    config_path = Path("configs/router.yaml")
+    with open(config_path) as f:
+        config = AppConfig.model_validate(yaml.safe_load(f))
+
+    source_file_path = source.raw_storage_path or source.file_name
+    extractor = SignalExtractor()
+    signals = extractor.extract(Path(source_file_path))
+
+    router = ParserRouter(config, log_dir=base / "route_logs")
+    decision = router.route(source, signals)
+
+    # Build parser registry and execute via orchestrator
+    parser_registry = ParserRegistry()
+    parser_registry.register(StdlibPDFParser())
+    parser_registry.register(BasicTextFallbackParser())
+
+    debug_store = DebugAssetStore(base / "debug")
+    effective_run_id = run_id or "cli_standalone"
+    orchestrator = PipelineOrchestrator(
+        parser_registry=parser_registry,
+        debug_dir=base / "debug",
+        debug_store=debug_store,
+    )
+    file_path = Path(source_file_path)
+    result = orchestrator.execute(
+        run_id=effective_run_id,
+        source_id=source_id,
+        file_path=file_path,
+        route_decision=decision,
+    )
+
     click.echo(json.dumps({
         "success": result.success,
-        "parser": result.parser_name,
-        "pages_parsed": result.pages_parsed,
-        "blocks_extracted": result.blocks_extracted,
-        "error": result.error,
+        "route": decision.selected_route,
+        "parser": result.final_parser,
+        "primary_succeeded": result.primary_succeeded,
+        "fallback_used": result.fallback_used,
+        "fallback_parser": result.fallback_parser,
+        "pages_parsed": result.docir.page_count if result.docir else 0,
+        "blocks_extracted": len(result.docir.blocks) if result.docir else 0,
+        "error": result.failure_reason,
     }, indent=2))
 
 

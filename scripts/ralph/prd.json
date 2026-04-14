@@ -59,7 +59,8 @@
     },
     {
       "id": "US-004",
-      "title": "Persist route decisions and route logs",
+      "title": "Render report output from persisted artifacts",
+      "passes": true,
       "description": "As a routing maintainer, I want route decisions and route logs written to disk so that parser selection is inspectable after the run completes.",
       "acceptanceCriteria": [
         "A route artifact is written for each run and linked from the RunManifest",
