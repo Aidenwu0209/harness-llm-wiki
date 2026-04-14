@@ -51,3 +51,17 @@
 - Tests in `tests/test_artifact_persistence_us003.py` cover all scenarios including failure case (10 tests)
 - **Changed files:** scripts/ralph/prd.json (passes: true)
 ---
+
+## [2026-04-15 16:00] - US-023
+- Created test file `tests/test_eval_real_artifacts_us023.py` with 11 tests covering all acceptance criteria
+- Eval (HarnessRunner) already reads persisted DocIR, claims, entities, patch, and previous_report from stores
+- IRStore, KnowledgeStore, PatchStore, ReportStore all support save/get round-trip for real artifacts
+- Missing DocIR produces blocking eval result (parse_quality.passed=False, release_decision="review_required")
+- Bad fixtures (low confidence, high-severity warnings, unsupported claims) produce blocking eval results
+- No empty placeholder inputs: when all artifacts are provided, metrics reflect real data
+- **Changed files:** tests/test_eval_real_artifacts_us023.py (new), scripts/ralph/prd.json (passes: true)
+- **Future iteration learnings:**
+  - HarnessRunner.run() already accepts previous_report parameter for regression checking
+  - ClaimRecord.model_construct() bypasses pydantic validation — useful for injecting bad data in tests
+  - DocIR.confidence is mutable after construction, allowing test manipulation
+---
