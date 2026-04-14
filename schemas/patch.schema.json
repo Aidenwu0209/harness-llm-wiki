@@ -1,0 +1,250 @@
+{
+  "$defs": {
+    "BlastRadius": {
+      "description": "Impact metrics for a patch.",
+      "properties": {
+        "pages": {
+          "default": 0,
+          "description": "Number of affected pages",
+          "minimum": 0,
+          "title": "Pages",
+          "type": "integer"
+        },
+        "claims": {
+          "default": 0,
+          "description": "Number of affected claims",
+          "minimum": 0,
+          "title": "Claims",
+          "type": "integer"
+        },
+        "links": {
+          "default": 0,
+          "description": "Number of affected links",
+          "minimum": 0,
+          "title": "Links",
+          "type": "integer"
+        },
+        "entities_redirected": {
+          "default": 0,
+          "description": "Entity redirects",
+          "minimum": 0,
+          "title": "Entities Redirected",
+          "type": "integer"
+        },
+        "conflicts_added": {
+          "default": 0,
+          "description": "New conflicts introduced",
+          "minimum": 0,
+          "title": "Conflicts Added",
+          "type": "integer"
+        }
+      },
+      "title": "BlastRadius",
+      "type": "object"
+    },
+    "Change": {
+      "description": "A single change within a patch.",
+      "properties": {
+        "type": {
+          "$ref": "#/$defs/ChangeType"
+        },
+        "target": {
+          "description": "Target page path or object ID",
+          "title": "Target",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "description": "Human-readable change summary",
+          "title": "Summary",
+          "type": "string"
+        },
+        "details": {
+          "additionalProperties": true,
+          "title": "Details",
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "target"
+      ],
+      "title": "Change",
+      "type": "object"
+    },
+    "ChangeType": {
+      "description": "Supported patch change types.",
+      "enum": [
+        "create_page",
+        "update_page",
+        "delete_page",
+        "split_page",
+        "merge_page",
+        "add_claim",
+        "update_claim",
+        "deprecate_claim",
+        "relink_entity",
+        "add_alias",
+        "fix_anchor",
+        "mark_conflict"
+      ],
+      "title": "ChangeType",
+      "type": "string"
+    },
+    "MergeStatus": {
+      "description": "Patch merge lifecycle.",
+      "enum": [
+        "pending",
+        "auto_merged",
+        "approved",
+        "rejected",
+        "rolled_back"
+      ],
+      "title": "MergeStatus",
+      "type": "string"
+    }
+  },
+  "description": "A structured change proposal for the wiki.\n\nInvariants:\n- No direct wiki writes; all changes go through patches.\n- High-risk patches must have review_required=True.\n- Blast radius must be computed before merge.",
+  "properties": {
+    "patch_id": {
+      "description": "Unique patch identifier",
+      "title": "Patch Id",
+      "type": "string"
+    },
+    "run_id": {
+      "description": "Ingest run that produced this patch",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source_id": {
+      "description": "Source document this patch derives from",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "changes": {
+      "items": {
+        "$ref": "#/$defs/Change"
+      },
+      "title": "Changes",
+      "type": "array"
+    },
+    "blast_radius": {
+      "$ref": "#/$defs/BlastRadius"
+    },
+    "risk_score": {
+      "default": 0.0,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Risk Score",
+      "type": "number"
+    },
+    "review_required": {
+      "default": false,
+      "title": "Review Required",
+      "type": "boolean"
+    },
+    "lint_passed": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Lint Passed"
+    },
+    "harness_passed": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Harness Passed"
+    },
+    "merge_status": {
+      "$ref": "#/$defs/MergeStatus",
+      "default": "pending"
+    },
+    "merged_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Merged At"
+    },
+    "reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer"
+    },
+    "review_note": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Review Note"
+    },
+    "rollback_of": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "If this patch rolls back a previous patch, its ID",
+      "title": "Rollback Of"
+    },
+    "pre_merge_snapshot": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Wiki page content before this patch was merged",
+      "title": "Pre Merge Snapshot"
+    }
+  },
+  "required": [
+    "patch_id",
+    "run_id",
+    "source_id"
+  ],
+  "title": "Patch",
+  "type": "object"
+}

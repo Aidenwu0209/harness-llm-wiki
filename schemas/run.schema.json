@@ -1,0 +1,356 @@
+{
+  "$defs": {
+    "PipelineStage": {
+      "description": "A single stage in the pipeline execution.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/StageStatus",
+          "default": "pending"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "completed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Completed At"
+        },
+        "error_detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Detail"
+        },
+        "duration_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stage duration in seconds",
+          "title": "Duration Seconds"
+        },
+        "warnings": {
+          "description": "Warnings recorded during this stage",
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "PipelineStage",
+      "type": "object"
+    },
+    "RunStatus": {
+      "description": "Overall status of a run.",
+      "enum": [
+        "created",
+        "running",
+        "completed",
+        "failed",
+        "blocked"
+      ],
+      "title": "RunStatus",
+      "type": "string"
+    },
+    "StageStatus": {
+      "description": "Status of a single pipeline stage.",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "skipped"
+      ],
+      "title": "StageStatus",
+      "type": "string"
+    }
+  },
+  "description": "A run manifest — one per pipeline execution.\n\nInvariants:\n- run_id must be stable and unique.\n- source_id links back to the SourceRegistry entry.\n- stages are ordered and cover the full pipeline lifecycle.\n- artifact_root is the base directory for all run artifacts.",
+  "properties": {
+    "run_id": {
+      "description": "Stable unique run identifier",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "source_id": {
+      "description": "Linked source identifier",
+      "title": "Source Id",
+      "type": "string"
+    },
+    "source_file_path": {
+      "description": "Original source file path",
+      "title": "Source File Path",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/RunStatus",
+      "default": "created"
+    },
+    "stages": {
+      "items": {
+        "$ref": "#/$defs/PipelineStage"
+      },
+      "title": "Stages",
+      "type": "array"
+    },
+    "artifact_root": {
+      "description": "Base directory for run artifacts",
+      "title": "Artifact Root",
+      "type": "string"
+    },
+    "ir_artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to persisted DocIR artifact",
+      "title": "Ir Artifact Path"
+    },
+    "knowledge_artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to persisted knowledge artifact",
+      "title": "Knowledge Artifact Path"
+    },
+    "patch_artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to persisted patch artifact",
+      "title": "Patch Artifact Path"
+    },
+    "report_artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to persisted report artifact",
+      "title": "Report Artifact Path"
+    },
+    "wiki_state_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to persisted wiki state artifact",
+      "title": "Wiki State Path"
+    },
+    "route_artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to persisted route decision artifact",
+      "title": "Route Artifact Path"
+    },
+    "lint_artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to persisted lint findings artifact",
+      "title": "Lint Artifact Path"
+    },
+    "debug_artifact_path": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Path to debug assets directory",
+      "title": "Debug Artifact Path"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "started_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "When the pipeline run started",
+      "title": "Started At"
+    },
+    "finished_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "When the pipeline run finished",
+      "title": "Finished At"
+    },
+    "selected_route": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Route selected by the router",
+      "title": "Selected Route"
+    },
+    "parser_chain": {
+      "description": "Ordered list of parsers attempted",
+      "items": {
+        "type": "string"
+      },
+      "title": "Parser Chain",
+      "type": "array"
+    },
+    "fallback_used": {
+      "default": false,
+      "description": "Whether a fallback parser was used",
+      "title": "Fallback Used",
+      "type": "boolean"
+    },
+    "lint_summary": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "Lint findings count by severity",
+      "title": "Lint Summary",
+      "type": "object"
+    },
+    "harness_summary": {
+      "additionalProperties": true,
+      "description": "Harness evaluation summary",
+      "title": "Harness Summary",
+      "type": "object"
+    },
+    "gate_decision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Gate pass/block decision",
+      "title": "Gate Decision"
+    },
+    "review_status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Current review status (pending/approved/rejected/none)",
+      "title": "Review Status"
+    }
+  },
+  "required": [
+    "run_id",
+    "source_id",
+    "source_file_path",
+    "artifact_root"
+  ],
+  "title": "RunManifest",
+  "type": "object"
+}

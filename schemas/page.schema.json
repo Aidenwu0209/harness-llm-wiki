@@ -1,0 +1,111 @@
+{
+  "$defs": {
+    "PageStatus": {
+      "description": "Wiki page lifecycle status.",
+      "enum": [
+        "draft",
+        "auto",
+        "reviewed",
+        "approved",
+        "deprecated"
+      ],
+      "title": "PageStatus",
+      "type": "string"
+    },
+    "PageType": {
+      "description": "Supported wiki page types (v1).",
+      "enum": [
+        "source",
+        "entity",
+        "concept",
+        "parser",
+        "benchmark",
+        "failure",
+        "comparison",
+        "decision"
+      ],
+      "title": "PageType",
+      "type": "string"
+    },
+    "ReviewStatus": {
+      "description": "Review status for a page.",
+      "enum": [
+        "pending",
+        "not_needed",
+        "approved",
+        "rejected"
+      ],
+      "title": "ReviewStatus",
+      "type": "string"
+    }
+  },
+  "description": "Mandatory frontmatter for every wiki page.\n\nEvery page in the wiki must carry this metadata.\nNo page may exist without valid frontmatter.",
+  "properties": {
+    "id": {
+      "description": "Stable page identifier (slug)",
+      "title": "Id",
+      "type": "string"
+    },
+    "type": {
+      "$ref": "#/$defs/PageType"
+    },
+    "title": {
+      "title": "Title",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/PageStatus",
+      "default": "draft"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "created_at": {
+      "format": "date",
+      "title": "Created At",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "source_docs": {
+      "description": "Source IDs this page derives from",
+      "items": {
+        "type": "string"
+      },
+      "title": "Source Docs",
+      "type": "array"
+    },
+    "related_entities": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Entities",
+      "type": "array"
+    },
+    "related_claims": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Related Claims",
+      "type": "array"
+    },
+    "review_status": {
+      "$ref": "#/$defs/ReviewStatus",
+      "default": "pending"
+    }
+  },
+  "required": [
+    "id",
+    "type",
+    "title",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "Frontmatter",
+  "type": "object"
+}
