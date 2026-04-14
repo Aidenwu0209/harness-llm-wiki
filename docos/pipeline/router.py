@@ -16,7 +16,7 @@ from typing import Any
 
 from docos.models.config import AppConfig, ParserRoute
 from docos.models.source import SourceRecord
-from docos.pipeline.parser import ParserCapability
+from docos.pipeline.parser import ParserCapability, ParserRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -112,9 +112,10 @@ class ParserRouter:
     4. Logs every decision for auditability.
     """
 
-    def __init__(self, config: AppConfig, log_dir: Path | None = None) -> None:
+    def __init__(self, config: AppConfig, log_dir: Path | None = None, parser_registry: ParserRegistry | None = None) -> None:
         self._config = config
         self._log_dir = log_dir
+        self._parser_registry = parser_registry
         self._log_entries: list[RouteLogEntry] = []
 
     def route(self, source: SourceRecord, signals: DocumentSignals) -> RouteDecision:
@@ -252,6 +253,36 @@ class ParserRouter:
             json.dumps(entry.to_dict(), indent=2, ensure_ascii=False, default=str),
             encoding="utf-8",
         )
+
+    def validate_config(self, registry: ParserRegistry | None = None) -> list[str]:
+        """Validate that all parser names in configured routes are resolvable.
+
+        Checks every ``primary_parser`` and ``fallback_parsers`` name in each
+        configured route against the given registry.  Returns a list of
+        unresolved parser names (empty when everything resolves).
+
+        Args:
+            registry: Parser registry to validate against.  If *None*, uses
+                the registry passed at construction time.
+
+        Returns:
+            List of parser names that could not be resolved.
+        """
+        reg = registry or self._parser_registry
+        if reg is None:
+            return []
+
+        unresolved: list[str] = []
+        seen: set[str] = set()
+
+        for route in self._config.router.routes:
+            for name in [route.primary_parser] + list(route.fallback_parsers):
+                if name not in seen:
+                    seen.add(name)
+                    if reg.get(name) is None:
+                        unresolved.append(name)
+
+        return unresolved
 
     def get_log_entries(self) -> list[RouteLogEntry]:
         """Return all logged route decisions."""
