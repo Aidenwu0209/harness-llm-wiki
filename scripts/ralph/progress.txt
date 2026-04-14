@@ -30,3 +30,15 @@
 - **Future iteration learnings:**
   - US-001 infrastructure already complete from previous cycle
 ---
+
+## [2026-04-15 14:05] - US-002
+- Verified all acceptance criteria met by existing code
+- RunStore.create() generates deterministic run_id and persists to `<base>/manifests/<run_id>.json`
+- RunManifest stores run_id, source_id, source_file_path, started_at, finished_at
+- RunStore.get() reloads manifest by run_id in fresh process
+- Tests in `tests/test_run_manifest_us002.py` cover all scenarios (7 tests)
+- **Changed files:** scripts/ralph/prd.json (passes: true)
+- **Future iteration learnings:**
+  - RunStore uses `<base>/manifests/<run_id>.json` layout
+  - run_id format: `run_<hash_prefix>_<time_hex>`
+---
