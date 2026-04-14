@@ -74,6 +74,14 @@
 - **Changed files:** tests/test_ingest_route_artifacts_us004.py (new), scripts/ralph/prd.json (passes: true)
 ---
 
+## [2026-04-15 14:30] - US-005
+- Parse persists: parser attempt logs (debug/<source_id>/<run_id>/<parser>/parse_log.json), parse results (DocIR via IRStore), debug assets (assets_index.json, raw_output.json)
+- Normalize persists: canonical DocIR (overwrites IRStore with repaired version), repair logs via RepairLog model
+- RunManifest links: ir_artifact_path, debug_artifact_path
+- Created test file `tests/test_parse_normalize_artifacts_us005.py` with 7 tests
+- **Changed files:** tests/test_parse_normalize_artifacts_us005.py (new), scripts/ralph/prd.json (passes: true)
+---
+
 ## [2026-04-15 10:45] - US-013
 - Added RouteAuditEntry dataclass for per-route score tracking
 - Added route_scores field to RouteDecision for storing all candidate route scores, accepted/rejected status, and rejection reasons
@@ -86,4 +94,46 @@
 - **Future iteration learnings:**
   - RouteDecision now has a route_scores list of RouteAuditEntry objects
   - _match_route returns tuple (ParserRoute | None, list[RouteAuditEntry])
+---
+
+## [2026-04-15 10:55] - US-014
+- Verified parse CLI command already loads route decisions before parser execution
+- CLI parse command: route → registry → orchestrator flow (no direct parser instantiation)
+- PipelineRunner._stage_parse() receives route_decision from _stage_route()
+- Tests in test_parse_route_us005.py verify the integration
+- **Changed files:** scripts/ralph/prd.json (set passes: true)
+- **Future iteration learnings:**
+  - Parse CLI always runs route first (does not check for existing route artifacts)
+  - Orchestrator.execute() takes a RouteDecision parameter directly
+---
+
+## [2026-04-15 11:00] - US-015
+- Verified parser resolution through ParserRegistry is fully implemented
+- PipelineOrchestrator.execute() resolves primary and fallback parsers via registry.get()
+- Missing parser → clear structured error (parser_unavailable list + failure_reason)
+- Tests in test_parser_resolution_us006.py cover primary, fallback, unknown, and fallback-success
+- **Changed files:** scripts/ralph/prd.json (set passes: true)
+---
+
+## [2026-04-15 11:05] - US-016
+- Verified orchestrator chain execution fully implemented
+- Primary parser runs first, stops on success
+- Fallback chain invoked on primary failure, in order
+- PipelineRunResult records fallback_used, fallback_parser, final_parser, attempts
+- Tests in test_orchestrator_chain_us007.py (9 tests) cover all acceptance criteria
+- **Changed files:** scripts/ralph/prd.json (set passes: true)
+---
+
+## [2026-04-15 16:30] - US-024
+- Added release_reasoning and gate_blockers fields to HarnessReport (dataclass)
+- Added gate_blockers and release_reasoning fields to RunManifest (pydantic model)
+- Updated PipelineRunner._stage_gate() to persist gate decision, blockers, review_status
+- Added _persist_gate_decision() method to write structured gate JSON artifact
+- Updated ReportStore serialization to include new fields with backward-compatible loading
+- Test file: tests/test_gate_persist_us024.py (11 tests)
+- **Changed files:** docos/harness/runner.py, docos/models/run.py, docos/pipeline/runner.py, docos/artifact_stores.py, tests/test_gate_persist_us024.py, scripts/ralph/prd.json
+- **Future iteration learnings:**
+  - HarnessReport.release_reasoning is auto-populated in compute_overall() based on which sections failed
+  - RunManifest now has gate_blockers and release_reasoning lists alongside gate_decision
+  - Gate decision artifacts stored in <base>/gate_decisions/<run_id>.json
 ---
