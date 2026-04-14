@@ -7,6 +7,7 @@ If any stage fails, subsequent stages are skipped and the failure is recorded.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -270,6 +271,10 @@ class PipelineRunner:
             router = ParserRouter(config, log_dir=self._base / "route_logs")
             decision = router.route(source, signals)
 
+            # Persist route decision as artifact
+            route_artifact_path = self._persist_route_decision(manifest.run_id, decision)
+            manifest.route_artifact_path = str(route_artifact_path)
+
             manifest.mark_stage("route", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return decision
@@ -319,7 +324,10 @@ class PipelineRunner:
             self._ir_store.save(docir, manifest.run_id)
 
             # Update manifest with parse metadata
-            manifest.ir_artifact_path = str(self._ir_store.get(manifest.run_id))
+            ir_path = self._base / "ir" / f"{manifest.run_id}.json"
+            manifest.ir_artifact_path = str(ir_path)
+            if parse_result.debug_assets_dir:
+                manifest.debug_artifact_path = parse_result.debug_assets_dir
             manifest.mark_stage("parse", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return docir
@@ -512,6 +520,10 @@ class PipelineRunner:
                 patch=patch,
             )
 
+            # Persist lint findings as artifact
+            lint_artifact_path = self._persist_lint_findings(manifest.run_id, findings)
+            manifest.lint_artifact_path = str(lint_artifact_path)
+
             manifest.mark_stage("lint", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return findings
@@ -614,3 +626,43 @@ class PipelineRunner:
             self._run_store.update(manifest)
         except Exception:
             pass
+
+    def _persist_route_decision(self, run_id: str, decision: RouteDecision) -> Path:
+        """Persist route decision as a JSON artifact."""
+        route_dir = self._base / "routes"
+        route_dir.mkdir(parents=True, exist_ok=True)
+        path = route_dir / f"{run_id}.json"
+        path.write_text(
+            json.dumps({
+                "selected_route": decision.selected_route,
+                "primary_parser": decision.primary_parser,
+                "fallback_parsers": decision.fallback_parsers,
+                "expected_risks": decision.expected_risks,
+                "review_policy": decision.review_policy,
+                "matched_signals": decision.matched_signals,
+                "decision_reason": decision.decision_reason,
+            }, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return path
+
+    def _persist_lint_findings(self, run_id: str, findings: list[Any]) -> Path:
+        """Persist lint findings as a JSON artifact."""
+        lint_dir = self._base / "lint_results"
+        lint_dir.mkdir(parents=True, exist_ok=True)
+        path = lint_dir / f"{run_id}.json"
+        findings_data = [
+            {
+                "code": f.code,
+                "message": f.message,
+                "severity": f.severity.value,
+                "page_id": f.page_id,
+                "block_id": f.block_id,
+            }
+            for f in findings
+        ]
+        path.write_text(
+            json.dumps(findings_data, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return path

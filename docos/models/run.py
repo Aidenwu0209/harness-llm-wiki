@@ -101,6 +101,9 @@ class RunManifest(BaseModel):
     patch_artifact_path: str | None = Field(default=None, description="Path to persisted patch artifact")
     report_artifact_path: str | None = Field(default=None, description="Path to persisted report artifact")
     wiki_state_path: str | None = Field(default=None, description="Path to persisted wiki state artifact")
+    route_artifact_path: str | None = Field(default=None, description="Path to persisted route decision artifact")
+    lint_artifact_path: str | None = Field(default=None, description="Path to persisted lint findings artifact")
+    debug_artifact_path: str | None = Field(default=None, description="Path to debug assets directory")
 
     # Temporal
     created_at: datetime = Field(default_factory=datetime.now)
