@@ -53,7 +53,7 @@ docos/                        # 核心包
     extractor.py              #   Entity / Claim / Relation 抽取 (确定性 ID)
     ops.py                    #   Conflict / Dedup / Deprecation 工作流
   wiki/                       # Wiki 编译
-    compiler.py               #   8 种页面类型编译器 + CompiledPage + Patch diff
+    compiler.py               #   8 种页面类型编译器 (Source/Entity/Concept/Parser/Benchmark/Failure/Comparison/Decision) + Patch diff
   lint/                       # 质量检查
     checker.py                #   结构 / 知识 / 运维 / Body / Anchor Lint (P0-P3)
   harness/                    # 评测体系
