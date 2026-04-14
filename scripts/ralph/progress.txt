@@ -1,0 +1,217 @@
+## Codebase Patterns
+- Python 3.12+, Pydantic v2 for all schema definitions
+- mypy --strict for type checking
+- Package name: docos (Document OS)
+- BBox is a type alias for tuple[float, float, float, float] (x0, y0, x1, y1)
+- BlockType enum covers all v1 block types including unknown; never drop unknown blocks
+- RelationType enum covers all v1 relation types
+- DocIR validates unique block_ids via Pydantic field_validator
+- All models use Field() with descriptions for self-documenting schema
+---
+
+## 2026-04-14 12:00 - US-001
+- 实现了 Canonical DocIR 的完整 Pydantic 模型定义
+- 更改的文件：docos/models/docir.py, tests/test_docir.py, pyproject.toml
+- **未来迭代的学习：**
+  - DocIR 模型包含 DocIR、Page、Block、Relation、TableCell、Citation、DocIRWarning、PageWarning 八个子模型
+  - BlockType 枚举覆盖 19 种 block 类型（含 unknown）
+  - RelationType 枚举覆盖 10 种关系类型
+  - DocIR 顶层通过 field_validator 强制 block_id 唯一性
+  - Block 通过 field_validator 验证 bbox 合法性
+  - 所有 confidence 字段使用 ge=0.0, le=1.0 约束
+  - 13 个单元测试全部通过，mypy strict 无报错
+---
+
+## 2026-04-14 12:15 - US-002
+- 实现了 Patch schema 和 Page template contracts
+- 更改的文件：docos/models/patch.py, docos/models/page.py, docos/models/__init__.py, tests/test_patch_page.py
+- **未来迭代的学习：**
+  - Patch 模型包含 Patch、Change、BlastRadius、ChangeType、MergeStatus 五个核心组件
+  - ChangeType 覆盖 11 种变更类型（create_page 到 mark_conflict）
+  - MergeStatus 覆盖 pending/auto_merged/approved/rejected/rolled_back 五种状态
+  - Frontmatter 是所有 wiki 页面的通用前置元数据模型
+  - PageType 枚举覆盖 8 种页面类型
+  - 每种页面类型有对应的 Content 模型（SourcePageContent、EntityPageContent 等）
+  - PAGE_CONTENT_MAP 字典映射 PageType → Content 模型类
+  - 16 个单元测试全部通过，mypy strict 无报错
+---
+
+## 2026-04-14 12:30 - US-003
+- 实现了外置配置系统，包含 router、risk thresholds、release gates、review policies、lint policy
+- 更改的文件：docos/models/config.py, configs/router.yaml, tests/test_config.py
+- **未来迭代的学习：**
+  - AppConfig 是配置的统一入口，包含 environment、router、risk_thresholds、release_gates、review_policies、lint_policy 六个子配置
+  - Environment 类型为 Literal["local", "dev", "staging", "prod"]
+  - RouterConfig 包含 5 条预定义路由（fast_text_route, complex_pdf_route, ocr_heavy_route, table_formula_route, fallback_safe_route）
+  - ReviewPolicies 支持 get_policy() 按名称查找，找不到时回退到 default_policy
+  - configs/router.yaml 是完整的默认配置文件，可通过 YAML 加载并 roundtrip 序列化
+  - 13 个单元测试全部通过（含 YAML 加载验证），mypy strict 无报错
+---
+
+## 2026-04-14 13:00 - US-004
+- 实现了 Source Registry record 的完整 Pydantic 模型
+- 更改的文件：docos/models/source.py, tests/test_source.py
+- **未来迭代的学习：**
+  - SourceRecord 包含 source_id、source_hash、file_name、mime_type、byte_size、created_at、ingested_at、ingest_count、language_hint、origin、tags、owner、status、latest_run_id、latest_docir_id
+  - SourceStatus 枚举覆盖 10 种状态（uploaded 到 blocked）
+  - IngestEntry 记录每次 ingest 的 run_id、parser、version、status、docir_id
+  - add_ingest() 方法自动更新 ingest_count、latest_run_id、latest_docir_id、status
+  - wiki_page_path 和 review_ids 字段实现 source-to-page 和 source-to-review 链接
+  - 8 个单元测试全通过
+---
+
+## 2026-04-14 13:15 - US-005
+- 实现了不可变 raw source 存储服务
+- 更改的文件：docos/source_store.py, tests/test_source_store.py
+- **未来迭代的学习：**
+  - RawStorage 存储布局：raw/<source_id>/original.<ext> + metadata.json
+  - store() 方法在已存在时抛出 FileExistsError，阻止覆盖
+  - 存储后验证 hash 一致性，不一致时自动清理并抛出 ValueError
+  - compute_hash() 使用 SHA-256，8KB 分块读取
+  - 7 个单元测试全通过（含覆盖防护、hash 校验、元数据读写）
+---
+
+## 2026-04-14 13:30 - US-006
+- 实现了 SourceRegistry 服务（hash 去重 + ingest 历史）
+- 更改的文件：docos/registry.py, tests/test_registry.py
+- **未来迭代的学习：**
+  - SourceRegistry 使用 index.json（hash→source_id 映射）+ records/<source_id>.json 的两级存储
+  - register() 先算 hash，再查 index.json 判重，已存在直接返回原记录
+  - record_ingest() 向 source 追加 IngestEntry 并更新状态
+  - list_sources() 扫描 records 目录获取全部记录
+  - 11 个单元测试全通过（含去重、多次 ingest、查询）
+---
+
+## 2026-04-14 14:00 - US-007
+- 实现了统一的 Parser Backend 抽象接口
+- 更改的文件：docos/pipeline/parser.py, tests/test_parser.py
+- **未来迭代的学习：**
+  - ParserBackend ABC 定义 5 个核心方法：parse()、normalize()、export_debug_assets()、healthcheck()、capabilities()
+  - ParserCapability 枚举覆盖 12 种能力（text_extraction 到 cross_page）
+  - ParseResult 是 parser 执行的标准输出（success/failure、raw_output、docir、elapsed、warnings）
+  - DebugConfig 控制 debug 资产生成（raw_output、page_images、block_overlays、reading_order）
+  - ParserRegistry 管理 parser 实例注册、查询和健康检查
+  - export_debug_assets() 有默认实现（保存 raw_output JSON），子类可覆盖
+  - 10 个单元测试全通过
+---
+
+## 2026-04-14 14:20 - US-008
+- 实现了基于信号评分的路由选择和决策日志
+- 更改的文件：docos/pipeline/router.py, tests/test_router.py
+- **未来迭代的学习：**
+  - DocumentSignals 包含 file_type、page_count、is_scanned、is_dual_column、is_table_heavy 等确定性信号
+  - ParserRouter._match_route() 对每条路由按信号匹配度打分，选最高分路由
+  - _score_route() 中 file_type 是硬过滤（不匹配直接 0 分），其余属性每匹配加 1 分
+  - RouteDecision 包含 selected_route、primary_parser、fallback_parsers、expected_risks、post_parse_repairs、review_policy 六个输出
+  - 每次路由决策持久化到 log_dir/route_<source_id>.json
+  - 路由选择完全从 AppConfig.router 读取，不依赖硬编码
+  - 12 个单元测试全通过（含全部 5 条配置路由的选择验证）
+---
+
+## 2026-04-14 14:40 - US-009
+- 实现了自动 fallback 执行策略
+- 更改的文件：docos/pipeline/orchestrator.py, tests/test_orchestrator.py
+- **未来迭代的学习：**
+  - PipelineOrchestrator.execute() 按 [primary, fallback1, fallback2, ...] 顺序尝试
+  - 每个 parser 依次执行 parse() → normalize()，任一步失败即尝试下一个
+  - PipelineRunResult 记录 primary_succeeded、fallback_used、fallback_parser、failure_reason
+  - fallback_used=True 时 review_policy_override 返回 "strict"
+  - parser 抛出异常时被 catch 为 ParseResult(success=False)，不会中断 pipeline
+  - parser 不在 registry 中时记录 warning 并跳过
+  - 10 个单元测试全通过（含 primary 成功、fallback 降级、全部失败、异常处理）
+---
+
+## 2026-04-14 15:00 - US-010
+- 实现了 Debug Asset Store，持久化 parser raw output、parse log、page images、overlays
+- 更改的文件：docos/debug_store.py, tests/test_debug_store.py
+- **未来迭代的学习：**
+  - 存储布局：debug/<source_id>/<run_id>/<parser_name>/ 下的 raw_output.json、parse_log.json、page_images/、overlays/
+  - persist_run_result() 是便捷方法，一次性保存 raw_output + parse_log + 额外 debug assets 并写 manifest
+  - assets_index.json 是每次 run 的 asset 清单，可通过 get_assets() 查询
+  - 9 个单元测试全通过
+---
+
+## 2026-04-14 15:20 - US-011 + US-012 + US-013
+- 实现了 Page-local Normalizer、Global Repair、Repair Log 三大组件
+- 更改的文件：docos/pipeline/normalizer.py, tests/test_normalizer.py
+- **未来迭代的学习：**
+  - PageLocalNormalizer.normalize_page() 将 parser raw data 转为 DocIR Page + Block 列表
+  - 未知 block_type 自动映射为 BlockType.UNKNOWN，绝不丢弃
+  - reading_order 从 raw_block.reading_order 字段读取，而非依赖 enumerate 索引
+  - GlobalRepair 包含 4 个修复器：heading hierarchy shift、repeated header/footer removal、cross-page continuation、caption attachment
+  - cross-page continuation 检测同类型 block 在相邻页面边界，创建 continued_to/continued_from relations
+  - caption attachment 对无 target 的 caption 找同页最近 figure/table（bbox 距离最小）
+  - heading shift 逻辑：从 text_md 中提取 # 数量作为 level，所有 heading 减去 (min_level - 1)
+  - RepairLog 每条记录包含 repair_id、repair_type、before、after、reason、confidence、performed_by、timestamp
+  - repair 不修改原 DocIR，而是创建新的 DocIR 实例（不可变性）
+  - 16 个单元测试全通过
+---
+
+## 2026-04-14 16:00 - US-014 ~ US-016
+- 实现了 Knowledge 模型（Entity、Claim、EvidenceAnchor、KnowledgeRelation）和 Extraction Pipeline
+- 更改的文件：docos/models/knowledge.py, docos/knowledge/extractor.py, tests/test_knowledge.py
+- **未来迭代的学习：**
+  - EntityType 枚举覆盖 13 种类型（person 到 document）
+  - ClaimStatus 支持 supported/inferred/conflicted/deprecated/needs_review 五种状态
+  - ClaimRecord 使用 model_validator 在 Pydantic 层强制 evidence/inference/conflict 约束
+  - supported claim 必须有 >=1 evidence_anchors（否则 ValidationError）
+  - inferred claim 必须有 inference_note
+  - conflicted claim 必须有 conflicting_sources
+  - RuleBasedEntityExtractor 从 title 提取 document entity，从 heading 提取 concept entity
+  - RuleBasedClaimExtractor 为每个 heading section 创建 supported claim + evidence anchor
+  - KnowledgeExtractionPipeline 按 entity → claim → relation 顺序执行
+  - 20 个单元测试全通过
+---
+
+## 2026-04-14 16:30 - US-017 ~ US-020
+- 实现了 Wiki 编译器（source、entity、concept、failure、comparison、decision 页面）
+- 更改的文件：docos/wiki/compiler.py, tests/test_wiki.py
+- **未来迭代的学习：**
+  - WikiCompiler 对 8 种页面类型各有 compile_*_page 方法
+  - 每个编译方法返回 (Frontmatter, markdown_body, page_path) 三元组
+  - render_page() 将 Frontmatter 序列化为 YAML 块 + body 合并为完整 wiki 页面
+  - _slug() 工具函数将文本转为 URL-safe 文件名
+  - source page 包含 metadata、section outline、entities、claims、warnings 五个区域
+  - entity page 包含 aliases、description、sources、claims、candidate_duplicates
+  - concept page 包含 definition、evidence-backed claims、related entities
+  - 所有页面使用 Frontmatter 确保元数据完整性
+  - 14 个单元测试全通过
+---
+
+## 2026-04-14 17:00 - US-021 ~ US-026
+- 实现了 Patch risk scoring、Lint 规则、Release Gates、Harness Runner
+- 更改的文件：docos/lint/checker.py, docos/harness/runner.py, tests/test_quality.py
+- **未来迭代的学习：**
+  - WikiLinter 分三类检查：structural（ID/page type/title）、knowledge（evidence/inference/duplicates）、operational（risk score/blast radius）
+  - LintSeverity 分 P0（阻止发布）、P1（必须修复）、P2（跟踪）、P3（建议）
+  - ReleaseGate.check() 接受 findings + harness_passed + regression_ok + fallback 标记，返回 (can_merge, reasons)
+  - HarnessRunner.run() 评估 parse_quality、knowledge_quality、maintenance_quality 三个维度
+  - knowledge quality 计算 citation_coverage_pct（>=95% 通过）和 unsupported_claim_rate（<=2% 通过）
+  - _check_regression() 对比前后 report，coverage 下降 >5% 标记回归
+  - HarnessReport.compute_overall() 综合三维度决定 release_decision
+  - 23 个单元测试全通过
+---
+
+## 2026-04-14 18:00 - US-027 ~ US-032
+- 实现了 Review Queue、Conflict/Dedup/Deprecation 工作流、CLI 命令
+- 更改的文件：docos/review/queue.py, docos/knowledge/ops.py, docos/cli/main.py, tests/test_review_ops.py
+- **未来迭代的学习：**
+  - ReviewQueue 支持持久化存储（queue/approved/rejected 子目录）
+  - ReviewItem 支持 approve/reject/request_changes 三种决策，每个 action 记录 reviewer、timestamp、reason
+  - ReviewItemType 覆盖 6 种审阅类型（patch、conflict_claim、entity_dedup、complex_table、complex_formula、cross_page）
+  - ConflictMarker 保留双方 claim_ids 和 source_ids，resolve() 记录 resolution_note
+  - DedupCandidate 使用 containment + Jaccard token 相似度，阈值 0.3 以上生成候选
+  - 候选去重走 pending → merged/kept_separate 流程，需要 reviewer 确认
+  - deprecate_claim() 保留原 claim 所有字段（evidence_anchors、supporting_sources），只改 status 为 DEPRECATED
+  - DeprecationRecord 总是 preserved=True，确保历史不丢失
+  - CLI 提供完整命令组：ingest、route、parse、normalize、extract、compile、lint、eval、review (list/approve/reject)、report
+  - 20 个单元测试全通过
+---
+
+## 项目完成总结
+- 32/32 User Stories 全部通过（passes=true）
+- 28 个源文件，14 个测试文件
+- 202 个单元测试全部通过
+- mypy strict 零错误
+- 覆盖完整的 pipeline：Source Registry → Router → Parser → DocIR → Knowledge Extraction → Wiki Compilation → Patch → Lint → Harness → Release Gate → Review Queue
+---

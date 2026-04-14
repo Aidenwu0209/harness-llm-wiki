@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data directories (generated at runtime)
+raw/
+parsed/
+ir/
+graph/
+patches/
+evals/runs/
+reviews/queue/
+reviews/approved/
+reviews/rejected/
+reports/
+registry/
+
+# Ralph runtime
+scripts/ralph/developer-output.log
+scripts/ralph/validator-output.log
+scripts/ralph/screenshots/
+scripts/ralph/dashboard-p-headless.png
+scripts/ralph/dashboard-p-headless-vt.png
+scripts/ralph/api-state.json
+scripts/ralph/dump-dom.html
+
+# Debug
+debug/

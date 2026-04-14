@@ -1,0 +1,131 @@
+# Router configuration — defines how documents are routed to parsers.
+# Route selection reads from this config rather than hardcoded prompt branches.
+
+environment: local
+schema_version: "1"
+
+router:
+  default_route: fallback_safe_route
+  routes:
+    - name: fast_text_route
+      description: "Fast extraction for text-heavy, simple-layout PDFs"
+      file_types: ["application/pdf"]
+      max_pages: 50
+      requires_ocr: false
+      table_formula_heavy: false
+      image_heavy: false
+      dual_column: false
+      primary_parser: pymupdf
+      fallback_parsers: [pdfplumber]
+      expected_risks: []
+      post_parse_repairs: ["normalize_headings", "remove_headers_footers"]
+      review_policy: default
+
+    - name: complex_pdf_route
+      description: "High-fidelity route for complex layouts, tables, formulas"
+      file_types: ["application/pdf"]
+      requires_ocr: false
+      table_formula_heavy: true
+      dual_column: true
+      primary_parser: marker
+      fallback_parsers: [pymupdf, pdfplumber]
+      expected_risks: ["cross_page_table", "formula_fidelity"]
+      post_parse_repairs:
+        - normalize_headings
+        - remove_headers_footers
+        - fix_cross_page_tables
+        - fix_caption_attachment
+      review_policy: strict
+
+    - name: ocr_heavy_route
+      description: "OCR-first route for scanned documents"
+      file_types: ["application/pdf", "image/png", "image/jpeg"]
+      requires_ocr: true
+      primary_parser: paddleocr
+      fallback_parsers: [tesseract]
+      expected_risks: ["ocr_contamination", "reading_order"]
+      post_parse_repairs:
+        - normalize_headings
+        - fix_reading_order
+        - remove_headers_footers
+      review_policy: strict
+
+    - name: table_formula_route
+      description: "Specialized route for table/formula dense documents"
+      file_types: ["application/pdf"]
+      table_formula_heavy: true
+      image_heavy: false
+      primary_parser: marker
+      fallback_parsers: [pymupdf]
+      expected_risks: ["table_structure", "formula_fidelity", "caption_attachment"]
+      post_parse_repairs:
+        - normalize_tables
+        - fix_equations
+        - fix_caption_attachment
+      review_policy: strict
+
+    - name: fallback_safe_route
+      description: "Safe fallback when no specific route matches"
+      file_types: ["application/pdf"]
+      primary_parser: pymupdf
+      fallback_parsers: [pdfplumber]
+      expected_risks: ["generic_fallback"]
+      post_parse_repairs: ["normalize_headings"]
+      review_policy: strict
+
+risk_thresholds:
+  high_risk_score: 0.7
+  medium_risk_score: 0.4
+  high_blast_pages: 5
+  high_blast_claims: 10
+  high_blast_links: 15
+  auto_merge_max_risk: 0.3
+  auto_merge_max_pages: 3
+
+release_gates:
+  block_on_p0_lint: true
+  block_on_p1_lint: true
+  block_on_unsupported_claim_increase: true
+  block_on_missing_harness: true
+  block_on_regression_exceeded: true
+  block_on_fallback_low_confidence: true
+  fallback_confidence_threshold: 0.5
+  regression_max_claim_change_pct: 10.0
+  regression_max_link_break_count: 0
+
+review_policies:
+  default_policy: default
+  policies:
+    - name: default
+      description: "Standard review policy"
+      require_review_on_fallback: true
+      require_review_on_high_risk: true
+      require_review_on_high_blast: true
+      require_review_on_conflict: true
+      require_review_on_entity_merge: true
+      auto_assign_reviewer: false
+      min_reviewers: 1
+
+    - name: strict
+      description: "Stricter review for complex routes and fallback results"
+      require_review_on_fallback: true
+      require_review_on_high_risk: true
+      require_review_on_high_blast: true
+      require_review_on_conflict: true
+      require_review_on_entity_merge: true
+      auto_assign_reviewer: false
+      min_reviewers: 1
+
+    - name: relaxed
+      description: "Relaxed policy for local development"
+      require_review_on_fallback: false
+      require_review_on_high_risk: true
+      require_review_on_high_blast: true
+      require_review_on_conflict: true
+      require_review_on_entity_merge: false
+      auto_assign_reviewer: false
+      min_reviewers: 1
+
+lint_policy:
+  p0_blocks_merge: true
+  p1_blocks_merge: true

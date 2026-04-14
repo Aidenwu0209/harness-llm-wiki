@@ -1,0 +1,44 @@
+[project]
+name = "docos"
+version = "0.1.0"
+description = "Document Parsing Knowledge OS — evidence-first, schema-first, patch-based, harness-gated"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.7",
+    "click>=8.1",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+docos = "docos.cli.main:cli"
+
+[tool.setuptools.packages.find]
+include = ["docos*"]
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

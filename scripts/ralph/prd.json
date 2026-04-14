@@ -1,0 +1,523 @@
+{
+  "project": "Document Parsing Knowledge OS",
+  "branchName": "ralph/document-parsing-knowledge-os-optimization",
+  "description": "Upgrade the document parsing wiki into an evidence-first, schema-first, patch-based, harness-gated knowledge compiler.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Define the versioned Canonical DocIR schema",
+      "description": "As a knowledge engineer, I want a versioned Canonical DocIR schema so that every parser output can normalize into one canonical contract.",
+      "acceptanceCriteria": [
+        "Define top-level DocIR fields including doc_id, source_id, parser, parser_version, schema_version, pages, blocks, relations, warnings, and confidence",
+        "Define required Page fields including page_no, width, height, rotation, image_uri or equivalent, ocr_used, reading_order_version, blocks, and warnings",
+        "Define required Block fields including block_id, page_no, block_type, reading_order, bbox, parent_id, children_ids, text fields, citations, confidence, source_parser, and source_node_id",
+        "Define supported relation types including caption_of, footnote_of, continued_from, continued_to, references, mentioned_in, same_table_as, same_section_as, duplicate_of, and derived_from",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-002",
+      "title": "Define the versioned patch and page schemas",
+      "description": "As a platform engineer, I want explicit patch and page schemas so that wiki changes, page metadata, and review decisions are machine-checkable.",
+      "acceptanceCriteria": [
+        "Define a patch schema with patch_id, run_id, source_id, generated_at, changes, blast_radius, risk_score, review_required, and merge_status",
+        "Define a page schema or template contract for source, entity, concept, failure, comparison, and decision pages",
+        "Require frontmatter fields such as id, type, title, schema_version, created_at, updated_at, source_docs, related_claims, and review_status where applicable",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-003",
+      "title": "Externalize router, threshold, and review policy config",
+      "description": "As an operator, I want routing, release thresholds, and review policies in config files so that system behavior does not depend on hidden prompt logic.",
+      "acceptanceCriteria": [
+        "Create external config contracts for parser routes, risk thresholds, release gates, and review policies",
+        "Support environment-specific values for local, dev, staging, and prod",
+        "Document how route selection and release decisions read from config instead of hardcoded prompt branches",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-004",
+      "title": "Create the source registry record contract",
+      "description": "As the system, I want a stable source registry record so that each uploaded document can be tracked across runs, parser versions, and wiki outputs.",
+      "acceptanceCriteria": [
+        "Define required source record fields including source_id, source_hash, file_name, mime_type, byte_size, created_at, ingested_at, ingest_count, origin, tags, owner, status, latest_run_id, and latest_docir_id",
+        "Ensure source_id is stable and unique for each document",
+        "Define source-to-page and source-to-review linkage fields or indexes",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-005",
+      "title": "Add immutable raw source storage",
+      "description": "As a reviewer, I want immutable raw source storage so that no LLM or repair step can overwrite the original evidence.",
+      "acceptanceCriteria": [
+        "Persist each original source into a read-only raw source location",
+        "Store metadata that links the immutable source copy back to the source registry record",
+        "Prevent write paths from overwriting the immutable original file",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-006",
+      "title": "Add hash-based duplicate detection and ingest history",
+      "description": "As the system, I want duplicate detection and ingest history so that repeated imports reuse source identity and remain auditable.",
+      "acceptanceCriteria": [
+        "Detect duplicate documents by hash before creating a new source identity",
+        "Increment ingest history for repeated imports of the same source",
+        "Record the parser version and run metadata for each ingest attempt",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-007",
+      "title": "Define the parser backend interface",
+      "description": "As a parser engineer, I want a common parser backend interface so that multiple parser implementations can plug into the same pipeline.",
+      "acceptanceCriteria": [
+        "Define parser backend methods for parse(file), normalize(raw_result), export_debug_assets(...), healthcheck(), and capabilities()",
+        "Document required capability metadata for route selection",
+        "Ensure the interface supports both primary and fallback parser backends",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-008",
+      "title": "Implement route decision output and reason logging",
+      "description": "As a parser engineer, I want route decisions to be explicit and logged so that route selection is explainable and debuggable.",
+      "acceptanceCriteria": [
+        "Route selection outputs selected_route, primary_parser, fallback_parsers, expected_risks, post_parse_repairs, and review_policy",
+        "Route logging records the document signals used to choose the route",
+        "Route selection reads from external config rather than hardcoded prompt branches",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-009",
+      "title": "Implement fallback parser execution policy",
+      "description": "As the system, I want fallback parser behavior to be automatic and explicit so that parser failures do not silently degrade data quality.",
+      "acceptanceCriteria": [
+        "When the primary parser fails, automatically execute a configured fallback parser",
+        "Record the failure reason, the fallback_used flag, and the selected fallback parser",
+        "Mark fallback runs for stricter review policy",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-010",
+      "title": "Persist parser raw outputs and debug assets",
+      "description": "As a parser engineer, I want each run to keep its raw parser outputs and debug assets so that parsing issues can be reproduced and reviewed.",
+      "acceptanceCriteria": [
+        "Persist raw parser output, parser logs, rendered page images, and debug screenshots or overlays per run",
+        "Link persisted debug assets to the source and run records",
+        "Ensure debug assets remain available after normalization and repair steps",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-011",
+      "title": "Normalize page-local parser output into DocIR pages and blocks",
+      "description": "As the system, I want page-local parser output normalized into DocIR pages and blocks so that downstream steps receive one consistent structure.",
+      "acceptanceCriteria": [
+        "Convert parser output into DocIR pages, blocks, and initial relations",
+        "Preserve reading_order, bbox, text content, and block hierarchy",
+        "Represent unknown content as unknown blocks instead of dropping it",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-012",
+      "title": "Add document-global repair for cross-page structure",
+      "description": "As the system, I want document-global repair so that cross-page tables, headings, references, and repeated layout noise are normalized after page-local parsing.",
+      "acceptanceCriteria": [
+        "Repair heading hierarchy, repeated header or footer noise, cross-page tables, cross-page notes, and caption attachment where applicable",
+        "Preserve continuity relations for cross-page objects",
+        "Write the repaired result back as canonical DocIR without deleting the original parser output",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-013",
+      "title": "Record structured repair logs",
+      "description": "As an engineer, I want every repair to have a before-and-after record so that normalization is auditable and debuggable.",
+      "acceptanceCriteria": [
+        "Each repair record stores repair_id, repair_type, before, after, reason, confidence, performed_by, and timestamp",
+        "Repair logs link back to the affected source and run",
+        "Repair logs are preserved alongside the canonical DocIR result",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-014",
+      "title": "Extract entities from canonical DocIR",
+      "description": "As a knowledge engineer, I want entities extracted from canonical DocIR so that the knowledge layer is built on structure instead of free-form summary text.",
+      "acceptanceCriteria": [
+        "Extract entity records from DocIR using a defined entity type set",
+        "Store enough metadata to link each entity back to source evidence",
+        "Preserve candidate aliases without implicitly merging entities",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-015",
+      "title": "Extract claims and relations from canonical DocIR",
+      "description": "As a knowledge engineer, I want claims and relations extracted from canonical DocIR so that the knowledge graph is explicit and maintainable.",
+      "acceptanceCriteria": [
+        "Extract structured claims and relations from normalized document content",
+        "Persist claim status fields needed for supported, inferred, and conflicted claims",
+        "Link claims to source pages or blocks before wiki compilation",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-016",
+      "title": "Enforce evidence and inference validation rules",
+      "description": "As a reviewer, I want evidence and inference rules enforced so that claims cannot be presented as authoritative without traceable support.",
+      "acceptanceCriteria": [
+        "Require supported claims to include at least one evidence anchor",
+        "Require inferred claims to include an inference note",
+        "Require conflicted claims to reference the conflicting source set",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-017",
+      "title": "Compile source pages from DocIR and extracted knowledge",
+      "description": "As an end user, I want a source page for each document so that I can inspect the document summary, structure, and evidence links from one entry point.",
+      "acceptanceCriteria": [
+        "Generate one source page per source with required frontmatter",
+        "Include source metadata, structural summary, and links to evidence-backed claims or related entities",
+        "Generate stable wiki links for the source page output",
+        "Typecheck passes"
+      ],
+      "priority": 17,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-018",
+      "title": "Compile entity pages incrementally",
+      "description": "As an end user, I want entity pages to update incrementally so that the knowledge base evolves without full rewrites.",
+      "acceptanceCriteria": [
+        "Generate new entity pages when new entities appear",
+        "Update existing entity pages through patch proposals rather than direct overwrite",
+        "Preserve aliases, related claims, and source_docs metadata on entity pages",
+        "Typecheck passes"
+      ],
+      "priority": 18,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-019",
+      "title": "Compile concept pages incrementally",
+      "description": "As an end user, I want concept pages to update incrementally so that shared concepts can absorb new evidence without losing prior context.",
+      "acceptanceCriteria": [
+        "Generate concept pages from extracted claims and relations",
+        "Update concept pages through patch proposals rather than direct overwrite",
+        "Preserve frontmatter, source_docs, related_claims, and review_status metadata",
+        "Typecheck passes"
+      ],
+      "priority": 19,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-020",
+      "title": "Compile failure, comparison, and decision pages",
+      "description": "As a team, I want failure, parser comparison, and decision pages so that hard cases and operational decisions become first-class knowledge objects.",
+      "acceptanceCriteria": [
+        "Generate or update failure pages for recurring parse failures",
+        "Generate parser comparison pages that summarize fidelity, structure, and cost differences",
+        "Generate decision pages or equivalent records for important review outcomes or operating decisions",
+        "Typecheck passes"
+      ],
+      "priority": 20,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-021",
+      "title": "Generate structured wiki patch artifacts",
+      "description": "As the system, I want wiki changes emitted as structured patches so that changes can be linted, reviewed, approved, and rolled back safely.",
+      "acceptanceCriteria": [
+        "Emit create_page and update_page operations in a structured patch artifact",
+        "Record the patch target pages and change summary for each generated patch",
+        "Do not write final wiki output directly without a patch artifact",
+        "Typecheck passes"
+      ],
+      "priority": 21,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-022",
+      "title": "Compute patch risk score and blast radius",
+      "description": "As a reviewer, I want each patch scored for risk and blast radius so that large or risky changes automatically receive more scrutiny.",
+      "acceptanceCriteria": [
+        "Compute a risk score for each patch",
+        "Compute blast radius metrics including affected pages, claims, and links",
+        "Mark high-risk or high-blast-radius patches as review_required",
+        "Typecheck passes"
+      ],
+      "priority": 22,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-023",
+      "title": "Run structural and knowledge lint before merge",
+      "description": "As the system, I want structural and knowledge lint before merge so that invalid schema, broken links, and unsupported claims are blocked early.",
+      "acceptanceCriteria": [
+        "Detect broken links, orphan pages, invalid ids, duplicate ids, missing frontmatter, and invalid page types",
+        "Detect supported claims without evidence, inferred claims without inference notes, conflicted claims without conflict sources, and duplicate entity candidates",
+        "Classify lint findings into P0, P1, P2, and P3 severities",
+        "Typecheck passes"
+      ],
+      "priority": 23,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-024",
+      "title": "Block auto-merge on release gate failures",
+      "description": "As a product owner, I want release gates enforced automatically so that invalid or regressed outputs do not merge into the formal wiki.",
+      "acceptanceCriteria": [
+        "Prevent auto-merge when P0 lint exists",
+        "Prevent auto-merge when harness has not run or when regression exceeds thresholds",
+        "Prevent auto-merge when unsupported claims increase or when fallback output is below confidence policy",
+        "Typecheck passes"
+      ],
+      "priority": 24,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-025",
+      "title": "Run harness and publish ingest reports",
+      "description": "As a product owner, I want a harness report for every ingest run so that parse quality, knowledge quality, and maintenance quality are measurable over time.",
+      "acceptanceCriteria": [
+        "Run harness for every ingest run",
+        "Publish an ingest report with parse quality, knowledge quality, and maintenance quality sections",
+        "Persist the harness output in a queryable report location",
+        "Typecheck passes"
+      ],
+      "priority": 25,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-026",
+      "title": "Publish regression comparison reports",
+      "description": "As a parser engineer, I want regression comparison reports across re-ingest runs so that parser and schema changes can be evaluated instead of guessed.",
+      "acceptanceCriteria": [
+        "Compare current ingest output against a previous run or golden baseline",
+        "Publish a regression report that highlights changed claims, links, and structural outputs",
+        "Make the regression result available to release gate logic",
+        "Typecheck passes"
+      ],
+      "priority": 26,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-027",
+      "title": "Build the review queue backend",
+      "description": "As a reviewer, I want a review queue backend so that high-risk patches, conflicted claims, and complex parsing cases can be triaged in one place.",
+      "acceptanceCriteria": [
+        "Store review queue entries for high-risk patches and review-required objects",
+        "Track reviewer, timestamp, target object, decision, reason, linked patch, and optional note",
+        "Support approve, reject, and request-changes state transitions",
+        "Typecheck passes"
+      ],
+      "priority": 27,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-028",
+      "title": "Build the review console page shell",
+      "description": "As a reviewer, I want a review console page shell so that I can inspect review-required documents through a dedicated UI instead of plain markdown alone.",
+      "acceptanceCriteria": [
+        "Render a review console page that can open a review-required source or patch",
+        "Display the original page image or equivalent source rendering in the console",
+        "Show the associated patch or review target summary alongside the source view",
+        "Typecheck passes",
+        "Verify in browser using agent-browser"
+      ],
+      "priority": 28,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-029",
+      "title": "Add bbox and reading-order overlays to the review console",
+      "description": "As a reviewer, I want bbox and reading-order overlays in the review console so that layout and sequence problems are visible on the original page image.",
+      "acceptanceCriteria": [
+        "Display block bounding boxes over the source rendering",
+        "Display reading-order overlays or numbering for the selected page",
+        "Allow the reviewer to inspect the block linked to the overlay",
+        "Typecheck passes",
+        "Verify in browser using agent-browser"
+      ],
+      "priority": 29,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-030",
+      "title": "Add claim drilldown and parser compare to the review console",
+      "description": "As a reviewer, I want claim-to-evidence drilldown and parser comparison in the review console so that I can validate knowledge outputs against source evidence and compare parser behavior.",
+      "acceptanceCriteria": [
+        "Allow a reviewer to open a claim and navigate to its evidence anchors",
+        "Display parser comparison data for a source in the review console",
+        "Keep the review target, source view, and evidence drilldown synchronized",
+        "Typecheck passes",
+        "Verify in browser using agent-browser"
+      ],
+      "priority": 30,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-031",
+      "title": "Add conflict, dedup, and deprecation workflows",
+      "description": "As a knowledge maintainer, I want explicit conflict, entity dedup, and deprecation workflows so that the wiki can evolve without silently overwriting history.",
+      "acceptanceCriteria": [
+        "Mark conflicted claims and preserve both sides of the evidence",
+        "Support candidate-based entity dedup suggestions without implicit merge",
+        "Support deprecated status with preserved history and replacement links where applicable",
+        "Typecheck passes"
+      ],
+      "priority": 31,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-032",
+      "title": "Add CLI commands for the core pipeline",
+      "description": "As an operator, I want CLI commands for the core pipeline so that ingest, parsing, compilation, review, and reporting can run in a repeatable local workflow.",
+      "acceptanceCriteria": [
+        "Provide CLI commands for ingest, route, parse, normalize, extract, compile, lint, eval, review list, review approve, review reject, and report",
+        "Ensure each CLI command maps to the underlying pipeline stage or review action",
+        "Document the expected inputs and outputs for each command",
+        "Typecheck passes"
+      ],
+      "priority": 32,
+      "passes": true,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    }
+  ]
+}
