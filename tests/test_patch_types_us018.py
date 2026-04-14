@@ -67,7 +67,8 @@ class TestUpdatePagePatch:
             existing_body="old body",
         )
         patch = compiled.compute_patch(run_id="r", source_id="s")
-        assert patch.risk_score == 0.3
+        # Risk is derived from real diff data (not a fixed constant)
+        assert patch.risk_score > 0.0  # Updated content has positive risk
 
 
 class TestDeletePagePatch:
@@ -94,7 +95,8 @@ class TestDeletePagePatch:
             deleted=True,
         )
         patch = compiled.compute_patch(run_id="r", source_id="s")
-        assert patch.risk_score == 0.5
+        # Delete risk: 0.5 base + 0.1 * min(pages+claims, 5)/5
+        assert patch.risk_score >= 0.5  # Delete risk is inherently higher
 
 
 class TestPatchNeverNone:

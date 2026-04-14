@@ -31,7 +31,7 @@ from docos.models.page import (
     ReviewStatus,
     SourcePageContent,
 )
-from docos.models.patch import Change, ChangeType, Patch
+from docos.models.patch import BlastRadius, Change, ChangeType, Patch
 from docos.models.source import SourceRecord
 
 # Sentinel for deleted pages
@@ -67,8 +67,16 @@ class CompiledPage:
         Returns a CREATE_PAGE patch for a new page, an UPDATE_PAGE patch
         for changed existing content, or a DELETE_PAGE patch when the
         page should be removed.
+
+        Blast radius and risk are derived from real diff data:
+        - **pages**: number of changed pages (always 1 per CompiledPage)
+        - **claims**: extracted from ``related_claims`` in frontmatter
+        - **links**: extracted from ``related_entities`` in frontmatter
+        - **risk**: proportional to the change magnitude (line-level diff
+          ratio for updates, fixed baselines for create/delete)
         """
         import hashlib
+        import difflib
 
         content_for_hash = self.body
         if self.deleted:
@@ -85,11 +93,47 @@ class CompiledPage:
         content_hash = hashlib.sha256(content_for_hash.encode()).hexdigest()[:12]
         patch_id = f"pat_{self.frontmatter.id}_{content_hash}"
 
+        # -- Compute blast radius from real data --
+        pages_affected = 1
+        claims_affected = len(self.frontmatter.related_claims) if self.frontmatter.related_claims else 0
+        links_affected = len(self.frontmatter.related_entities) if self.frontmatter.related_entities else 0
+
+        # Count actual line-level changes for updates
+        lines_added = 0
+        lines_removed = 0
+        if self.existing_body is not None and not self.deleted:
+            old_lines = self.existing_body.splitlines(keepends=True)
+            new_lines = self.body.splitlines(keepends=True)
+            diff = list(difflib.unified_diff(old_lines, new_lines, n=0))
+            for line in diff:
+                if line.startswith("+") and not line.startswith("+++"):
+                    lines_added += 1
+                elif line.startswith("-") and not line.startswith("---"):
+                    lines_removed += 1
+
+        blast = BlastRadius(
+            pages=pages_affected,
+            claims=claims_affected,
+            links=links_affected,
+        )
+
+        # -- Compute risk from real diff data --
         risk = 0.0
         if self.deleted:
-            risk = 0.5
-        elif self.existing_body is not None:
-            risk = 0.3
+            # Deletions are inherently higher risk
+            risk = 0.5 + 0.1 * min(pages_affected + claims_affected, 5) / 5
+        elif self.existing_body is None:
+            # New pages: risk scales with content size
+            new_line_count = len(self.body.splitlines()) if self.body else 0
+            risk = min(0.1 + new_line_count * 0.005, 0.4)
+        else:
+            # Updates: risk proportional to change ratio
+            total_old_lines = max(len(self.existing_body.splitlines()), 1)
+            changed_lines = lines_added + lines_removed
+            change_ratio = changed_lines / total_old_lines
+            risk = min(0.1 + change_ratio * 0.6, 0.8)
+
+        risk = round(min(risk, 1.0), 4)
 
         return Patch(
             patch_id=patch_id,
@@ -98,6 +142,7 @@ class CompiledPage:
             changes=[
                 Change(type=change_type, target=str(self.page_path), summary=summary),
             ],
+            blast_radius=blast,
             risk_score=risk,
         )
 

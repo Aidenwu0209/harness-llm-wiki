@@ -549,7 +549,7 @@ class PipelineRunner:
             manifest.lint_artifact_path = str(lint_artifact_path)
 
             # Record lint observability (US-034)
-            severity_counts: dict[str, int] = {}
+            severity_counts: dict[str, int] = {"total": len(findings)}
             for f in findings:
                 sev = f.severity.value
                 severity_counts[sev] = severity_counts.get(sev, 0) + 1
