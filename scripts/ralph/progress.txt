@@ -293,3 +293,12 @@
   - SHRINK-TO-IMPLEMENTED is the safer strategy — avoids runtime warnings and silent skips
   - When adding new parser adapters: implement, register in PipelineRunner, uncomment route in router.yaml
 ---
+
+## [2026-04-15 18:30] - US-028
+- Created test file tests/test_raw_file_e2e_us028.py (6 tests) with _assert_full_artifact_chain helper
+- Tests start from real source files (not in-memory objects) using all 3 fixture categories
+- Asserts full artifact chain: source registry, raw copies, RunManifest, route logs, DocIR, knowledge, patches, lint, harness, gate
+- Helper function verifies all 10 stages completed and each artifact path exists
+- Test fails if a stage exits without writing its required persisted artifacts
+- **Changed files:** tests/test_raw_file_e2e_us028.py (new), scripts/ralph/prd.json
+---
