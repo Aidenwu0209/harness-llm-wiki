@@ -1,4 +1,21 @@
 ## Codebase Patterns
 - This repository is Python-first; use `python -m mypy docos/` for type checking and `python -m pytest tests/ -q` for automated verification.
-- Pipeline work is split across `docos/cli`, `docos/pipeline`, `docos/knowledge`, `docos/wiki`, `docos/lint`, `docos/harness`, and `docos/review`; prefer keeping each story focused on one layer.
+- Core runtime work is split across `docos/cli`, `docos/pipeline`, `docos/wiki`, `docos/lint`, `docos/harness`, and `docos/review`; keep each story focused on one boundary when possible.
+- PipelineRunner (docos/pipeline/runner.py) is the unified entry point for full pipeline execution; new stages should be added as methods there.
+- PIPELINE_STAGES in docos/models/run.py defines canonical stage order: ingest, route, parse, normalize, extract, compile, patch, lint, harness, gate.
+- Config for tests should use inline YAML strings to avoid external file dependencies.
+- Only stdlib_pdf and basic_text parsers are available in the registry; router.yaml references external parsers (pymupdf etc.) that are NOT registered.
+
+## 2026-04-14 - US-001
+- Created PipelineRunner service class (docos/pipeline/runner.py) that orchestrates all 10 pipeline stages
+- Added `docos run <file_path>` CLI command with --origin, --tags, --config options
+- Added "patch" to PIPELINE_STAGES in run manifest model
+- Pipeline stops on failure and reports the failing stage name
+- 6 tests: full success, manifest persistence, all stages completed, IR artifact, failure stops early, CLI registration
+- **Files changed:** docos/pipeline/runner.py (new), docos/cli/main.py, docos/models/run.py, tests/test_pipeline_runner.py (new)
+- **Future iterations learning:**
+  - PIPELINE_STAGES must be kept in sync with runner stages
+  - mark_stage() raises ValueError for unknown stage names — always check the list first
+  - Config for tests: use inline YAML strings, no external config files needed
+---
 

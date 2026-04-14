@@ -129,6 +129,7 @@ class PipelineRunner:
             source_id="",
             status=RunStatus.RUNNING,
         )
+        manifest: RunManifest | None = None
 
         try:
             # -- Load config --
@@ -142,20 +143,28 @@ class PipelineRunner:
             result.run_id = manifest.run_id
             result.source_id = source.source_id
 
+            # Mark run-level start time
+            manifest.started_at = datetime.now()
+            manifest.status = RunStatus.RUNNING
+            self._run_store.update(manifest)
+
             # -- Stage 2: Route --
             route_decision = self._stage_route(source, manifest, config, result)
             if route_decision is None:
+                self._finalize_failure(manifest, result)
                 return result
             result.route_decision = route_decision
 
             # -- Stage 3: Parse --
             docir = self._stage_parse(source, manifest, route_decision, result)
             if docir is None:
+                self._finalize_failure(manifest, result)
                 return result
 
             # -- Stage 4: Normalize --
             docir = self._stage_normalize(source, manifest, docir, result)
             if docir is None:
+                self._finalize_failure(manifest, result)
                 return result
             result.docir = docir
 
@@ -190,6 +199,7 @@ class PipelineRunner:
             # -- Finalize --
             result.status = RunStatus.COMPLETED
             manifest.status = RunStatus.COMPLETED
+            manifest.finished_at = datetime.now()
             self._run_store.update(manifest)
 
         except Exception as e:
@@ -198,6 +208,7 @@ class PipelineRunner:
             if result.failed_stage is None:
                 result.failed_stage = "unknown"
             result.error_detail = str(e)
+            self._finalize_failure(manifest, result)
 
         result.elapsed_seconds = time.monotonic() - start_time
         return result
@@ -226,6 +237,8 @@ class PipelineRunner:
                 source_hash=source.source_hash,
                 source_file_path=str(file_path.resolve()),
             )
+            manifest.mark_stage("ingest", StageStatus.RUNNING)
+            self._run_store.update(manifest)
             manifest.mark_stage("ingest", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return source, manifest
@@ -590,3 +603,14 @@ class PipelineRunner:
         """Load and validate app configuration."""
         with open(self._config_path) as f:
             return AppConfig.model_validate(yaml.safe_load(f))
+
+    def _finalize_failure(self, manifest: RunManifest | None, result: PipelineResult) -> None:
+        """Persist failure state to the run manifest."""
+        if manifest is None or not result.run_id:
+            return
+        try:
+            manifest.status = RunStatus.FAILED
+            manifest.finished_at = datetime.now()
+            self._run_store.update(manifest)
+        except Exception:
+            pass

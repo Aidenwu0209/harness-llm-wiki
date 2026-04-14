@@ -105,6 +105,8 @@ class RunManifest(BaseModel):
     # Temporal
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+    started_at: datetime | None = Field(default=None, description="When the pipeline run started")
+    finished_at: datetime | None = Field(default=None, description="When the pipeline run finished")
 
     def mark_stage(self, name: str, status: StageStatus, error_detail: str | None = None) -> None:
         """Update a stage's status by name."""
