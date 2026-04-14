@@ -103,6 +103,14 @@
 - **Changed files:** tests/test_report_reconstruct_us007.py (new), scripts/ralph/prd.json (passes: true)
 ---
 
+## [2026-04-15 15:00] - US-008
+- Added `docos rerun <source_id>` CLI command to create new run from existing source
+- `docos report <run_id>` inspects saved run without rerunning (already existed)
+- Failed run preserves completed artifact references (route artifact, source registry record)
+- Created test file `tests/test_rerun_report_us008.py` with 7 tests
+- **Changed files:** docos/cli/main.py (added rerun command), tests/test_rerun_report_us008.py (new), scripts/ralph/prd.json (passes: true)
+---
+
 ## [2026-04-15 10:45] - US-013
 - Added RouteAuditEntry dataclass for per-route score tracking
 - Added route_scores field to RouteDecision for storing all candidate route scores, accepted/rejected status, and rejection reasons
