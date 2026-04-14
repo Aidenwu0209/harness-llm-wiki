@@ -82,6 +82,18 @@
 - **Changed files:** tests/test_parse_normalize_artifacts_us005.py (new), scripts/ralph/prd.json (passes: true)
 ---
 
+## [2026-04-15 14:40] - US-006
+- Extract persists: entities.json, claims.json, relations.json in knowledge/<run_id>/
+- Compile persists: wiki page state in wiki_state/*.json
+- Patch persists: patch artifacts via PatchStore
+- Lint persists: lint findings in lint_results/<run_id>.json
+- Eval (harness) persists: report in reports/<run_id>.json
+- Gate persists: gate_decision in RunManifest (passed/blocked)
+- RunManifest links to knowledge_artifact_path, lint_artifact_path, report_artifact_path, patch_artifact_path
+- Created test file `tests/test_downstream_artifacts_us006.py` with 11 tests
+- **Changed files:** tests/test_downstream_artifacts_us006.py (new), scripts/ralph/prd.json (passes: true)
+---
+
 ## [2026-04-15 10:45] - US-013
 - Added RouteAuditEntry dataclass for per-route score tracking
 - Added route_scores field to RouteDecision for storing all candidate route scores, accepted/rejected status, and rejection reasons
