@@ -337,3 +337,13 @@
 - Tests in tests/test_skill_entrypoints_us031.py verify all mappings
 - **Changed files:** scripts/ralph/prd.json (passes: true)
 ---
+
+## [2026-04-15 19:25] - US-031
+- Verified tests/test_skill_contracts_us032.py already has comprehensive contract tests (19 tests)
+- Covers all 6 skills: input/output/invariants/fallback/evaluation contracts
+- Invariant-breaking tests: deterministic IDs, route determinism, lint readonly, patch atomic, review append-only
+- test_parse_non_deterministic_id_would_break_invariant verifies _deterministic_id function
+- test_lint_readonly_invariant_verified ensures lint doesn't modify inputs
+- All tests run in standard test suite
+- **Changed files:** scripts/ralph/prd.json (passes: true)
+---
