@@ -42,3 +42,12 @@
   - RunStore uses `<base>/manifests/<run_id>.json` layout
   - run_id format: `run_<hash_prefix>_<time_hex>`
 ---
+
+## [2026-04-15 14:10] - US-003
+- Verified all acceptance criteria met by existing code
+- PipelineStage model has name, status, started_at, completed_at, error_detail, duration_seconds
+- PipelineRunner marks each stage RUNNING/COMPLETED/FAILED with timestamps
+- Failed run: stages before failure stay COMPLETED, failed stage is FAILED with error_detail, later stages remain PENDING
+- Tests in `tests/test_artifact_persistence_us003.py` cover all scenarios including failure case (10 tests)
+- **Changed files:** scripts/ralph/prd.json (passes: true)
+---
