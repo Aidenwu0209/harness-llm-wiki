@@ -94,6 +94,15 @@
 - **Changed files:** tests/test_downstream_artifacts_us006.py (new), scripts/ralph/prd.json (passes: true)
 ---
 
+## [2026-04-15 14:50] - US-007
+- `docos report <run_id>` reconstructs full run state from persisted stores
+- Report shows: source registry info, route result, parser chain, fallback state, DocIR summary, knowledge summary, patch state, lint summary, harness result, release decision, review status
+- Failed run report includes failing stage and error details from RunManifest
+- No placeholder strings: all output generated from stores and manifest data
+- Created test file `tests/test_report_reconstruct_us007.py` with 12 tests
+- **Changed files:** tests/test_report_reconstruct_us007.py (new), scripts/ralph/prd.json (passes: true)
+---
+
 ## [2026-04-15 10:45] - US-013
 - Added RouteAuditEntry dataclass for per-route score tracking
 - Added route_scores field to RouteDecision for storing all candidate route scores, accepted/rejected status, and rejection reasons
