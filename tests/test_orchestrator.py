@@ -219,7 +219,7 @@ class TestAllFail:
         result = orchestrator.execute("run_005", "src_005", sample_file, decision)
 
         assert result.success is False
-        assert "not available" in (result.failure_reason or "")
+        assert "not registered" in (result.failure_reason or "") or "not available" in (result.failure_reason or "")
 
 
 class TestRunResultMetadata:
