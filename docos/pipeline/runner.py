@@ -510,14 +510,31 @@ class PipelineRunner:
             manifest.mark_stage("lint", StageStatus.RUNNING)
             self._run_store.update(manifest)
 
+            # Load real wiki page data from wiki store
+            from docos.models.page import Frontmatter
+
+            pages: list[Frontmatter] = []
+            page_bodies: dict[str, str] = {}
+            for path in (self._base / "wiki_state").glob("*.json"):
+                state = self._wiki_store.get(path.stem)
+                if state is not None and state.frontmatter:
+                    try:
+                        pages.append(Frontmatter.model_validate(state.frontmatter))
+                        page_id = state.frontmatter.get("id", "")
+                        if page_id:
+                            page_bodies[page_id] = state.body
+                    except Exception:
+                        pass
+
             linter = WikiLinter()
             patch = patches[0] if patches else None
             findings = linter.lint(
-                pages=[],
+                pages=pages,
                 claims=claims,
                 entities=entities,
                 docir=docir,
                 patch=patch,
+                page_bodies=page_bodies,
             )
 
             # Persist lint findings as artifact

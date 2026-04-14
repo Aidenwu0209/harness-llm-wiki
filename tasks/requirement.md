@@ -1,895 +1,778 @@
-# harness-llm-wiki 优化 requirement.md
+# requirements.md
 
-版本：2026-04-14  
-适用范围：基于当前 `main` 分支仓库快照的优化清单  
-文档目的：把当前仓库从“架构方向正确但闭环未成的 skeleton”推进到“可跑通最小闭环、可审计、可回归的 v1 alpha”
+# DocOS / harness-llm-wiki 下一阶段优化需求文档
 
----
-
-## 1. 执行摘要
-
-当前仓库**方向是对的**：你已经把系统设计成 `Raw Source → Router → DocIR → Knowledge → Wiki → Review/Harness`，也明确把 `DocIR` 定义成机器真相，把 Markdown 降为视图层。
-
-但当前仓库的主要问题不是“模块太少”，而是下面四件事还没有闭环：
-
-1. **端到端流程没有真正跑通**：CLI 里 `parse / normalize / extract / compile / lint / eval / review / report` 大量还是 stub。  
-2. **持久化层不完整**：Raw/Registry 有了，但 `DocIR / knowledge / patch / run report / merge state` 还没有正式存储层。  
-3. **系统一致性与可回归性不足**：随机 ID、repair 后 page-block 引用不一致、review queue 不可恢复、patch lifecycle 没落地。  
-4. **README / skills / repo 结构和真实实现存在漂移**：文档讲的是系统级产品，但代码里很多关键链路还停留在 contract 或 placeholder。
-
-这份 requirement 的核心目标不是继续“加更多模块”，而是：
-
-- 先打穿 **一条最小可运行闭环**
-- 再修复 **determinism / patch / review / harness** 这四个系统级根问题
-- 最后再把它整理成真正可复用的 **LLM Wiki Skills + Workflow**
+版本：v1.0  
+日期：2026-04-14  
+适用仓库：`Aidenwu0209/harness-llm-wiki`
 
 ---
 
-## 2. 当前阶段判断
+## 1. 背景与判断
 
-### 2.1 正确的部分
+当前仓库已经具备了正确的系统骨架：
 
-- 系统分层是正确的：Raw、DocIR、Knowledge、Wiki 没有混为一谈。
-- Patch-first 思路是正确的：没有直接把 LLM 输出写进 wiki。
-- Router / Normalizer / Review / Harness / Lint 已经有了模块边界。
-- 这已经是一个 **system skeleton**，不是 prompt demo。
+- 已明确四层真相：`Raw Source -> DocIR -> Knowledge -> Wiki`
+- 已明确 11 步主流程：`Ingest -> Route -> Parse -> Normalize -> Extract -> Compile -> Patch -> Lint -> Harness -> Gate -> Review`
+- 已明确 domain skills、patch 模式、review queue、harness gate
+- 已经从“纯目录架构”进化为“有测试支撑的系统内核”
 
-### 2.2 当前真实定位
+但当前阶段的核心问题也很明确：
 
-当前仓库更准确的定位是：
+**架构已经基本对，执行闭环还没有彻底打通。**
 
-> **Document Knowledge Compiler / DocOS 的 v0 系统内核**
+下一阶段的目标，不应该继续横向扩模块，而应该优先把“README 里声明的能力”完全落到“真实运行链”上。换句话说，下一步的工作重点是：
 
-而不是：
-
-- 已经可用的完整产品
-- 已经成型的一套 domain-specific skills
-- 已经打通的 document parsing wiki pipeline
+> 把 DocOS 从“架构正确的 kernel”推进到“真实可运行、可回归、可 gate、可 merge 的最小闭环系统”。
 
 ---
 
-## 3. 优化总目标
+## 2. 当前版本的主要问题汇总
 
-本轮优化后，系统必须达到下面的最小目标：
+### 2.1 已发现的核心缺口
 
-1. 对单一垂直 domain（建议先 PDF 文档）跑通完整 ingest 闭环。  
-2. 从 raw source 产出可落盘的 DocIR、knowledge objects、patch、review item、harness report。  
-3. 所有知识对象具备**稳定 ID**与**可追溯 evidence anchor**。  
-4. wiki 更新必须经由 `patch → lint → harness → gate → review/merge`。  
-5. 至少有一组 domain-specific skills，而不是只有通用 skill 目录。  
-6. README、代码、目录结构、CLI 行为保持一致。
+1. **CLI 主链路没有真正打通**
+   - `parse` 仍直接实例化 `StdlibPDFParser`
+   - `normalize` / `extract` / `compile` 仍以状态返回为主，没有真正读写完整 artifacts
+   - `lint` 目前传入空的 `pages / claims / entities`
+   - `eval` 尚未基于完整 artifacts 执行真实 harness gate
+
+2. **路由配置与运行时 parser 能力尚未统一**
+   - `configs/router.yaml` 中声明了 `pymupdf / pdfplumber / marker / paddleocr / tesseract`
+   - 但运行主路径当前没有完全通过 `ParserRegistry + Orchestrator` 统一调度这些 parser
+   - 配置声明与可执行 backend 之间还存在“文档领先实现”的现象
+
+3. **Signal -> Router 的关键逻辑仍有偏差**
+   - `_detect_dual_column()` 目前恒定返回 `False`
+   - `_score_route()` 当前只把 `table_formula_heavy` 对齐到 `is_table_heavy`，没有独立使用 `is_formula_heavy`
+   - `max_pages` 当前更像加分项，而不是清晰的路由边界规则
+
+4. **Patch 仍未成为系统中心的状态转换层**
+   - 新页面当前不会生成 patch，而是直接返回 `None`
+   - `patch_id` 使用内建 `hash(self.body)`，不适合做重跑稳定性与可重放控制
+   - `create/update/delete/apply/merge/rollback` 的 lifecycle 还没有闭环
+
+5. **Skills 现在更像 contract 文档，而不是运行时单元**
+   - `.agents/skills/*/SKILL.md` 已经写得很好
+   - 但系统还没有做到“按 skills 调度”和“按 skills 做 contract tests”
+
+6. **测试仍以组件正确性为主，缺少真实端到端金路径**
+   - 目前 workflow tests 已经有价值
+   - 但仍偏向“构造 DocIR 后测试后续流程”
+   - 还缺一个从 raw fixture 开始、贯穿 route/parse/normalize/extract/compile/lint/eval/report 的完整 golden path
 
 ---
 
-## 4. 本轮优化的总原则
+## 3. 本阶段总体目标
 
-1. **先闭环，再扩展 parser 数量**。  
-2. **先修一致性，再优化生成质量**。  
-3. **先 deterministic，再谈 re-ingest stability**。  
-4. **先 patch-driven，再做自动 merge**。  
-5. **先一个 domain 打透，再做通用平台化**。
+本阶段必须达成以下总目标：
+
+### 3.1 产品级目标
+
+系统必须至少能够稳定完成一条真实闭环：
+
+```text
+Raw Source
+  -> Route
+  -> Parse
+  -> Normalize
+  -> Extract
+  -> Compile
+  -> Patch
+  -> Lint
+  -> Harness
+  -> Gate
+  -> Report
+```
+
+### 3.2 工程级目标
+
+- 所有阶段都必须落盘到统一 artifacts
+- 所有 artifacts 都必须被 `run manifest` 串起来
+- 所有 release decision 都必须基于真实 artifacts 和真实 gate
+- 所有 patch 都必须可审计、可回放、可回滚
+- 所有 route 都必须能映射到真实 parser backend
+- 所有 P0 阶段都必须有 regression tests
+
+### 3.3 本阶段不做的事
+
+以下事项不是当前阻塞项，不能优先于 P0：
+
+- 不优先做花哨 UI
+- 不优先增加过多新 parser
+- 不优先做复杂 agent orchestration
+- 不优先做通用平台化抽象
+- 不优先做大规模 LLM/hybrid extraction 扩张
 
 ---
 
-## 5. P0 requirements（必须先完成）
+## 4. 设计原则
 
-## REQ-P0-001：打通最小可运行闭环
+本轮优化必须坚持以下原则：
+
+1. **先闭环，再扩展**
+2. **先真实 artifacts，再漂亮 README**
+3. **先 deterministic baseline，再 hybrid intelligence**
+4. **先 patch-driven state transition，再直接写 wiki**
+5. **先 config/runtime 对齐，再扩 parser 数量**
+6. **先 contract test，再 agent 化**
+
+---
+
+# 5. P0 必做需求（必须完成）
+
+---
+
+## P0-01：打通真实端到端金路径
+
+### 目标
+系统必须支持一条真正可执行的最小主链路，而不是“各命令分别存在但彼此没有形成真实闭环”。
 
 ### 当前问题
-- `docos/cli/main.py` 中，`parse / normalize / extract / compile / lint / eval / review / report` 仍然是 stub 或静态输出。
-- 当前 `ingest` 只做 raw 存储与 source 注册，没有触发真正的 pipeline。
+当前 CLI 中：
 
-### 要求
-实现一条真正可执行的最小闭环：
+- `parse` 直接调用 `StdlibPDFParser`
+- `normalize` / `extract` / `compile` 主要返回占位状态
+- `lint` 没有吃到真实 wiki/knowledge 状态
+- `eval` 尚未吃到完整 artifacts
 
-`ingest -> signal extraction -> route -> parse -> normalize -> extract -> compile -> patch -> lint -> harness -> gate -> review`
+### 必须实现
 
-### 验收标准
-- 执行一次 ingest 后，系统至少能落盘以下 artifacts：
-  - source record
-  - pipeline run manifest
-  - DocIR
-  - entities / claims / relations
-  - patch
-  - lint findings
-  - harness report
-  - review item（如需要）
-- `docos report <run_id>` 可以读取真实运行结果，不再输出占位文本。
+1. 新增一个**统一的端到端执行入口**，二选一即可：
+   - `docos run <file_path>`
+   - 或 `docos pipeline run <source_id>`
 
-### 影响文件
+2. 该入口必须执行以下阶段：
+   - ingest
+   - route
+   - parse
+   - normalize
+   - extract
+   - compile
+   - patch
+   - lint
+   - eval
+   - report
+
+3. 每一阶段必须：
+   - 读前一阶段产物
+   - 写本阶段产物
+   - 更新 `RunManifest`
+   - 写入 stage status / started_at / finished_at / error_detail
+
+4. 每一阶段失败时必须：
+   - 在 `RunManifest` 中写明失败阶段
+   - 保存尽可能多的 debug artifact
+   - 不允许静默失败
+
+5. `report` 输出必须基于真实 run artifacts，而不是基于推测状态。
+
+### 涉及文件
+
 - `docos/cli/main.py`
-- `docos/pipeline/*`
-- `docos/wiki/*`
-- `docos/lint/*`
-- `docos/harness/*`
-- `docos/review/*`
+- `docos/run_store.py`
+- `docos/registry.py`
+- `docos/source_store.py`
+- `docos/debug_store.py`
+- `docos/ir_store.py`
+- `docos/knowledge_store.py`
+- `docos/artifact_stores.py`
+- `docos/models/run.py`
+
+### 验收标准
+
+- 运行一次命令后，系统能从 raw file 一直走到 report
+- 所有中间产物均存在且可定位
+- `report` 中能看到 route / parser / DocIR / knowledge / patch / harness / review 状态
+- 任一阶段失败时，report 中能看到明确的失败阶段与错误信息
 
 ---
 
-## REQ-P0-002：引入真实的运行状态与持久化层
+## P0-02：让 parse 阶段真正走 Route + Registry + Orchestrator
+
+### 目标
+`parse` 命令不能继续硬编码某个 parser；它必须遵从系统的 route 决策。
 
 ### 当前问题
-当前有 RawStorage、SourceRegistry、DebugAssetStore，但缺少正式的：
-- DocIR store
-- knowledge store
-- patch store
-- run store
-- harness report store
-- merged wiki state store
+当前 `parse` 直接创建 `StdlibPDFParser()`，绕过了：
 
-### 要求
-新增以下持久化层：
+- `ParserRouter`
+- `ParserRegistry`
+- `Orchestrator`
+- fallback 机制
+- route log 和 debug assets
 
-- `ir_store/`：保存 `DocIR`
-- `knowledge_store/`：保存 entities / claims / relations
-- `patch_store/`：保存待审/已审/已合并 patch
-- `run_store/`：保存每次 ingest 的 run manifest
-- `report_store/`：保存 lint / harness / review report
-- `wiki_store/`：保存当前 wiki 文件与 page metadata
+### 必须实现
 
-### 验收标准
-- 任一 run 可在系统重启后完整恢复查询。
-- `source_id` 和 `run_id` 可追溯到对应的所有 artifacts。
-- 没有任何关键对象只存在于内存。
+1. `parse` 阶段必须先读取已有 route decision；若不存在则先执行 route。
+2. `parse` 阶段必须通过 `ParserRegistry` resolve：
+   - primary parser
+   - fallback parsers
+3. `parse` 阶段必须由 `Orchestrator` 统一执行：
+   - primary success -> 结束
+   - primary fail -> fallback
+   - fallback success -> 标记 fallback_used
+   - 全部失败 -> run failed
+4. parse 结果必须落盘：
+   - parser result
+   - parser metadata
+   - fallback chain
+   - debug assets
+   - warnings / confidence / parser version
 
----
+### 涉及文件
 
-## REQ-P0-003：实现真实的文档信号提取，而不是伪路由
-
-### 当前问题
-`route` CLI 当前使用的是：
-- 一个几乎空的 `SourceRecord`
-- 一个固定写死的 `DocumentSignals(file_type="application/pdf")`
-
-这意味着当前路由不是“基于文档事实”，而是“基于默认值”。
-
-### 要求
-新增 `signal extraction` 模块，从 raw source 中提取：
-- file type / extension / MIME
-- page_count
-- scanned / OCR need
-- dual-column
-- table-heavy
-- formula-heavy
-- image-heavy
-- language
-- target mode
-- known failure hints
-
-### 验收标准
-- `docos route <source_id>` 读取真实 source 和真实信号。
-- 路由决策日志中包含完整 signal dump。
-- 同一文档在无内容变化时，route 结果稳定。
-
-### 影响文件
-- `docos/cli/main.py:41-63`
-- `docos/pipeline/router.py`
-- 新增 `docos/pipeline/signals.py`
-
----
-
-## REQ-P0-004：落地 concrete parser adapters 与 parser registry wiring
-
-### 当前问题
-当前 `ParserBackend` / `ParserRegistry` 只有抽象层，没有 concrete parser adapter；`pyproject.toml` 也没有 parser / OCR / LLM provider 相关依赖。
-
-### 要求
-至少接入一条真实 parser 路径：
-- 1 个主 parser
-- 1 个 fallback parser
-- 统一输出到 canonical DocIR
-
-建议先做：
-- `pymupdf` / `pdfplumber` 这种 text-heavy route
-- 或者 1 个 complex parser + 1 个 lightweight fallback
-
-### 验收标准
-- `ParserRegistry` 中可枚举实际 parser。
-- `route -> orchestrator -> parser backend` 可真实执行。
-- parser 失败后可 fallback 到下一条 route。
-
-### 影响文件
+- `docos/cli/main.py`
 - `docos/pipeline/parser.py`
 - `docos/pipeline/orchestrator.py`
-- `pyproject.toml`
-
----
-
-## REQ-P0-005：Patch 必须从概念升级为真实执行对象
-
-### 当前问题
-虽然 `Patch` model 已定义，但 `WikiCompiler` 目前返回的是 `(frontmatter, markdown_body, page_path)` tuple，不是正式 patch；当前没有 `patch apply / merge / rollback` 执行层。
-
-### 要求
-实现完整 patch lifecycle：
-
-- `generate_patch(existing_page, compiled_page)`
-- `compute_blast_radius(patch)`
-- `score_patch_risk(patch)`
-- `apply_patch_to_staging(patch)`
-- `merge_patch(patch)`
-- `rollback_patch(patch_id)`
-
-### 验收标准
-- 系统内**没有直接写 wiki 的路径**。
-- 所有页面变更都能追溯到 patch。
-- patch 在 merge 前后有明确状态迁移。
-- rollback 可恢复到上一个已合并状态。
-
-### 影响文件
-- `docos/models/patch.py`
-- `docos/wiki/compiler.py`
-- 新增 `docos/wiki/patcher.py` 或 `docos/patches/*`
-
----
-
-## REQ-P0-006：引入 deterministic IDs，修复 re-ingest 不稳定
-
-### 当前问题
-`knowledge/extractor.py` 里 `_make_id()` 使用随机 UUID，为 entity / claim / relation / anchor 生成随机 ID。这样会导致：
-- 同一文档重复 ingest，ID 全变
-- diff stability 失效
-- patch blast radius 虚高
-- dedup / merge / review 很难做
-
-### 要求
-将下列对象改为**确定性 ID**：
-- entity_id
-- claim_id
-- relation_id
-- evidence_anchor_id
-- review_id（至少可追踪）
-
-建议采用：
-- 内容归一化文本
-- source_id
-- page_no / block_id
-- 语义类型
-- 哈希派生
-
-### 验收标准
-- 同一 source 在内容不变的情况下 re-ingest，关键 knowledge ID 稳定。
-- diff 主要反映真实内容变化，而不是随机 ID 漂移。
-- README 中的 `Re-ingest Diff Stability >= 90%` 变得可实现。
-
-### 影响文件
-- `docos/knowledge/extractor.py:59-60`
-- `docos/knowledge/ops.py`
-- `docos/models/knowledge.py`
-
----
-
-## REQ-P0-007：补齐 DocIR 真正的 invariants 校验
-
-### 当前问题
-`DocIR` 的 docstring 写明了多条 invariant，但当前只实现了 `block_id` 唯一性校验，没有覆盖：
-- page-block 引用一致性
-- 同页 reading_order 唯一性
-- relation block 引用合法性
-- page_count 与 pages 数量一致性
-- pages.blocks 中 block_id 必须存在
-
-### 要求
-为 `DocIR` 增加系统级 validator，覆盖以上约束。
-
-### 验收标准
-- 非法 DocIR 在进入 extract/compile 前被阻断。
-- 每条报错能指出 page_no/block_id。
-- normalizer 输出的 DocIR 可通过全部校验。
-
-### 影响文件
-- `docos/models/docir.py`
-
----
-
-## REQ-P0-008：修复 page-local normalization 的字段丢失问题
-
-### 当前问题
-`PageLocalNormalizer._convert_block()` 当前没有把以下字段正确搬运到 canonical Block：
-- `table_cells`
-- `footnote_refs`
-- `citations`
-- 其他 parser-specific structure fields 的扩展映射
-
-这会导致从 parser 输出到 DocIR 的信息丢失。
-
-### 要求
-- 补齐 canonical block 的字段映射。
-- 对于暂不支持的 parser-specific 字段，要保留在 `metadata` 或 extension field 中，而不是默默丢弃。
-- 对 bbox 输入长度和类型做更严格校验。
-
-### 验收标准
-- 复杂表格 / 引文 / 脚注相关字段不会在 normalize 过程中消失。
-- 新增 fixture 覆盖 table / citation / footnote block。
-
-### 影响文件
-- `docos/pipeline/normalizer.py:117-155`
-
----
-
-## REQ-P0-009：修复 global repair 后 page-block 引用不一致
-
-### 当前问题
-`GlobalRepair.repair()` 修改了 `blocks`，但返回 `DocIR` 时直接复用了 `pages=docir.pages`。如果 repair 删除 header/footer 或重组 block，`pages.blocks` 会与真实 block 集合失配。
-
-### 要求
-在所有 global repair 结束后，重新构建：
-- `pages.blocks`
-- page-level warnings
-- reading order
-- relation references
-
-### 验收标准
-- repair 前后 `DocIR` 仍能通过完整 invariant 校验。
-- 被移除的 block 不再出现在任何 `Page.blocks` 中。
-- 新增/重排 block 后 page 内顺序一致。
-
-### 影响文件
-- `docos/pipeline/normalizer.py:173-204`
-
----
-
-## REQ-P0-010：修复 heading repair 的实质性 bug
-
-### 当前问题
-`_normalize_heading_hierarchy()` 当前逻辑会把所有 heading 统一改成单个 `#`，而不是按照 `shift` 做层级平移。并且末尾有不可达的 `return blocks`。
-
-### 要求
-- 正确按 `shift` 调整 heading level。
-- 保留原层级差异。
-- 清理不可达代码。
-
-### 验收标准
-- 输入 `###` / `####`，在 shift 后仍保留相对层级差。
-- normalizer 测试覆盖最小 level 不为 1 的场景。
-
-### 影响文件
-- `docos/pipeline/normalizer.py:234-260`
-
----
-
-## REQ-P0-011：修复 ReviewQueue 的持久化与恢复问题
-
-### 当前问题
-当前 `ReviewQueue`：
-- 初始化时不会从磁盘加载已有 item
-- `request_changes` 不会持久化
-- `approve/reject` 会写到新目录，但原 queue 中旧文件不处理
-- `list_pending()` 只看内存，不看磁盘
-
-### 要求
-- 启动时加载已有 review items。
-- 所有 action 都要落盘。
-- 明确 queue / approved / rejected / changes_requested 的状态迁移。
-- 支持通过 review_id 恢复 item 历史。
-
-### 验收标准
-- 系统重启后 review queue 不丢失。
-- `request_changes` 也可恢复。
-- 一个 review item 的全生命周期可审计。
-
-### 影响文件
-- `docos/review/queue.py:111-155`
-
----
-
-## REQ-P0-012：补齐 page type contract，当前 8 类只落了 6 类
-
-### 当前问题
-`PageType` 中声明了 8 种 page type：
-- source
-- entity
-- concept
-- parser
-- benchmark
-- failure
-- comparison
-- decision
-
-但 `PAGE_CONTENT_MAP` 只覆盖了 6 类，缺少：
-- parser
-- benchmark
-
-### 要求
-- 为 `parser` 和 `benchmark` 增加 content schema。
-- 让编译器和 page validation 真正完整支持这 8 类。
-
-### 验收标准
-- 8 种 page type 均有内容模型、编译方法、lint 规则。
-- 不再存在“enum 已声明但 content model 未定义”的半闭环状态。
-
-### 影响文件
-- `docos/models/page.py:21-31`
-- `docos/models/page.py:168-176`
-- `docos/wiki/compiler.py`
-
----
-
-## REQ-P0-013：让 WikiCompiler 真正成为 patch compiler，而不是 markdown renderer
-
-### 当前问题
-当前 `WikiCompiler` 主要是 Markdown 字符串拼接器：
-- 没有读取 existing page
-- 没有 diff
-- 没有 risk / blast 计算
-- 没有 patch 产出
-- 每次 compile 都重置 `created_at`
-
-### 要求
-将 compiler 升级为：
-- `compile_page_state(...) -> CompiledPage`
-- `diff_page(existing, compiled) -> Patch`
-- `render_page(...)`
-
-并保留 `created_at`、page identity、existing backlinks。
-
-### 验收标准
-- 对已有 page 的 update 不会重置 `created_at`。
-- patch 只包含最小必要变更。
-- compiler 可以在“不写文件”的前提下生成完整 patch 结果。
-
-### 影响文件
-- `docos/wiki/compiler.py:74-79`
-- `docos/wiki/compiler.py:96-108`
-
----
-
-## REQ-P0-014：替换手写 frontmatter 序列化，避免 YAML 脆弱性
-
-### 当前问题
-当前 `_frontmatter_yaml()` 手工拼 YAML，存在潜在问题：
-- Python list repr 与严格 YAML 不完全等价
-- 特殊字符 / 多行 title / 字段转义脆弱
-- 字段顺序与空值策略不可控
-
-### 要求
-使用正式 YAML serializer 生成 frontmatter，并为 frontmatter 做 round-trip test。
-
-### 验收标准
-- 生成的 frontmatter 可稳定被 YAML parser 读回。
-- 特殊字符、引号、多语言文本不会破坏格式。
-
-### 影响文件
-- `docos/wiki/compiler.py:40-58`
-
----
-
-## REQ-P0-015：让 lint / harness / release gate 真正接入生产流
-
-### 当前问题
-- `lint` 目前只收 `Frontmatter`，无法检查页面正文、wikilink、anchor 一致性。
-- `docir` 参数未使用。
-- `ReleaseGate` 没有真正消费 `AppConfig.release_gates` / `lint_policy`。
-- `HarnessRunner` 的指标过于轻量，且 `unsupported_claim_rate` 基本是 model validation 的重复约束。
-
-### 要求
-- lint 扩展到 page body / link graph / anchor coverage / schema-body consistency。
-- release gate 改成 config-driven。
-- harness 至少覆盖 parse / knowledge / maintenance 三类真实指标。
-
-### 验收标准
-- lint findings 能阻断真实坏 patch。
-- gate 的阻断条件由 config 控制，而不是硬编码。
-- harness report 可被 release gate 直接消费。
-
-### 影响文件
-- `docos/lint/checker.py`
-- `docos/harness/runner.py`
-- `docos/models/config.py`
-
----
-
-## 6. P1 requirements（重要但可在闭环后完成）
-
-## REQ-P1-001：升级 router scoring 逻辑，避免误路由
-
-### 当前问题
-当前 router 评分存在几个明显缺口：
-- `is_formula_heavy` 没真正参与评分
-- `max_pages` 只是加分项，不是硬限制
-- `language / is_scanned / has_known_failures / target_mode` 未参与决策
-- 未结合 parser health / capabilities
-- tie-break 只靠 route 顺序
-
-### 要求
-升级 route scoring：
-- 区分 hard filter 与 soft score
-- 使用全部有效 signal
-- 接入 parser healthcheck
-- 输出 explainable score breakdown
-
-### 验收标准
-- 不同文档类型能稳定落到预期 route。
-- route log 能解释每一项得分/扣分。
-
-### 影响文件
-- `docos/pipeline/router.py:176-204`
-- `docos/models/config.py`
-- `configs/router.yaml`
-
----
-
-## REQ-P1-002：补齐 orchestrator 的运行语义与 debug 完整性
-
-### 当前问题
-当前 orchestrator 存在这些问题：
-- 没有 parse 前 healthcheck
-- 只在成功时导出 debug assets，失败 attempt 没有完整调试信息
-- 没有持久化 `PipelineRunResult`
-- 没有 timeout / retry / parser unavailable 的细分状态
-
-### 要求
-- 所有 attempt（包括失败）都写 parse log。
-- parser 不可用要有单独状态和告警。
-- run result 必须落盘，并关联 source_id / run_id / parser chain。
-
-### 验收标准
-- 任一次 fallback 都能查看 primary fail 的原因与 artifacts。
-- debug store 能按 source/run/parser 三层浏览。
-
-### 影响文件
-- `docos/pipeline/orchestrator.py`
+- `docos/pipeline/parsers/*`
 - `docos/debug_store.py`
 
+### 验收标准
+
+- `parse` 不再直接 new `StdlibPDFParser`
+- parse 输出中能看到 selected route 和 parser chain
+- primary parser fail 时 fallback 能真实执行
+- fallback 行为会记录到 manifest 和 debug asset 中
+
 ---
 
-## REQ-P1-003：升级 knowledge extraction，从规则 baseline 进化为 hybrid pipeline
+## P0-03：统一 router config 与 runtime parser registry
+
+### 目标
+配置里声明的 parser 必须是系统真实可执行的 parser，而不是“概念性名字”。
 
 ### 当前问题
-当前 extractor 只是 baseline：
-- heading -> concept entity
-- heading section -> structural claim
-- 字符串包含 -> relation
+当前 `configs/router.yaml` 中的 parser 名称，与实际运行路径中的 parser 实现未完全统一。
 
-问题包括：
-- 只看同页 paragraph，跨页 section 会丢失
-- 不会在下一个 heading 截断 section
-- relation 规则过于脆弱
-- evidence anchor 过于简陋
+### 必须实现
 
-### 要求
-设计 hybrid extraction：
-- rule-based pre-extraction
-- LLM-assisted refinement（可选）
-- schema validation
-- conflict-aware claim generation
+1. 系统启动时新增**配置合法性校验**：
+   - `router.yaml` 中每个 `primary_parser`
+   - `router.yaml` 中每个 `fallback_parsers`
+   - 都必须能被 `ParserRegistry` resolve
+
+2. 若 parser 名称无法 resolve，系统必须：
+   - 启动失败
+   - 或 route 校验失败
+   - 严禁静默降级
+
+3. 两种路线只能选一种：
+   - **路线 A**：缩减 `router.yaml`，只保留当前真实实现的 parser
+   - **路线 B**：把 `pymupdf / pdfplumber / marker / paddleocr / tesseract` adapter 真正接入 registry
+
+4. `pyproject.toml` 的 optional dependencies 必须与 runtime parser strategy 保持一致。
+
+### 涉及文件
+
+- `configs/router.yaml`
+- `docos/pipeline/parser.py`
+- `docos/pipeline/parsers/*`
+- `docos/models/config.py`
+- `pyproject.toml`
 
 ### 验收标准
-- claim extraction 不再跨越相邻 heading 污染。
-- 支持跨页 section / table / figure claim。
-- relation 生成 precision 显著高于 substring baseline。
 
-### 影响文件
-- `docos/knowledge/extractor.py`
+- router config 中的每个 parser name 都能 resolve
+- route 生成的 decision 一定可执行
+- 若未安装对应 extra，错误信息清晰可见
+- CI 中存在 config/runtime 一致性测试
 
 ---
 
-## REQ-P1-004：补齐 evidence anchor 的完整字段与可视化对接
+## P0-04：修正 signal extractor 与 route scoring 逻辑
+
+### 目标
+让 signal 和 route scoring 变成真正可用的 deterministic routing，而不是“形式上存在”。
 
 ### 当前问题
-当前 anchor 只填了少量字段，缺少：
-- bbox
-- char offsets
-- render_uri
-- canonical quote policy
+- `_detect_dual_column()` 当前恒定返回 `False`
+- `_score_route()` 仅把 `table_formula_heavy` 对齐到 `is_table_heavy`
+- `is_formula_heavy` 没有真正参与路由决策
+- `max_pages` 的语义不够清晰
 
-### 要求
-anchor 必须能支撑：
-- 追溯回原文 block
-- review UI 高亮定位
-- 证据 diff
-- 页面内 quote 截取
+### 必须实现
+
+1. `_detect_dual_column()` 必须不再恒定返回 `False`。
+   - 可以继续保持 heuristic
+   - 也可以引入 parser-assisted detection
+   - 但必须对特定 fixture 产生可验证的 `True/False`
+
+2. `table` 与 `formula` 必须明确二选一：
+   - 要么 route schema 拆成两个字段：`table_heavy` 和 `formula_heavy`
+   - 要么 router 明确说明 `table_formula_heavy` 是复合信号，并同时消费 `is_table_heavy / is_formula_heavy`
+
+3. `max_pages` 必须明确语义：
+   - 是硬过滤条件
+   - 还是软加分条件
+   - 必须文档化，并在代码中一致实现
+
+4. route log 必须记录真实命中的信号，至少包括：
+   - file_type
+   - page_count
+   - needs_ocr
+   - is_scanned
+   - is_dual_column
+   - is_table_heavy
+   - is_formula_heavy
+   - is_image_heavy
+
+### 涉及文件
+
+- `docos/pipeline/signal_extractor.py`
+- `docos/pipeline/router.py`
+- `configs/router.yaml`
+- `tests/`
 
 ### 验收标准
-- review UI 能从 claim 直接跳回源页面和 block。
-- source summary / concept page 中的 evidence link 可点击追溯。
 
-### 影响文件
-- `docos/models/knowledge.py`
-- `docos/knowledge/extractor.py`
+- 存在至少 3 类不同 fixture，能够命中不同 route
+- dual-column fixture 能让 `is_dual_column=True`
+- formula-heavy fixture 能影响 route 选择
+- route log 中的 matched signals 与真实输入一致
 
 ---
 
-## REQ-P1-005：修正 knowledge ops 的行为正确性
+## P0-05：把 Patch 提升为正式状态转换层
+
+### 目标
+Patch 必须成为 wiki state 变更的唯一正式入口，而不是编译器里的附属对象。
 
 ### 当前问题
-- `mark_conflict()` 只返回 `ConflictMarker`，并不更新 claim 的 status / conflicting_sources。
-- `deprecate_claim()` 重建 ClaimRecord 时丢失了 `object_value` 字段。
-- `DedupCandidate` 与 review queue 没有真正联通。
-- 文件末尾的 `Literal` import 放在底部，风格和可维护性较差。
+- 新页面当前不会生成 patch
+- patch_id 不稳定
+- 没有完整 `create/update/delete/apply/merge/rollback`
+- risk / blast radius 还没有基于真实 diff 计算
 
-### 要求
-- conflict、deprecate、dedup 都必须是完整 workflow，而不是孤立 helper。
-- deprecate/merge 时不得丢字段。
-- dedup 候选进入 review queue 后可落地审批。
+### 必须实现
+
+1. `CompiledPage.compute_patch()` 必须支持：
+   - `CREATE_PAGE`
+   - `UPDATE_PAGE`
+   - `DELETE_PAGE`
+
+2. 新页面必须生成 `CREATE_PAGE patch`，不得返回 `None`。
+
+3. `patch_id` 必须改为**确定性内容哈希**，推荐：
+   - `sha256(page_path + canonical_frontmatter + canonical_body + change_set)`
+
+4. Patch 结构必须包含：
+   - patch_id
+   - run_id
+   - source_id
+   - change list
+   - old/new content hash
+   - risk score
+   - blast radius
+   - generated_at
+
+5. 新增正式 patch lifecycle：
+   - `apply_patch()`
+   - `merge_patch()`
+   - `rollback_patch()`
+   - `reject_patch()`
+
+6. `PatchStore` 必须保存完整 patch artifact，而不是只保存简化信息。
+
+7. review queue 必须引用 patch，而不是抽象状态。
+
+### 涉及文件
+
+- `docos/wiki/compiler.py`
+- `docos/models/patch.py`
+- `docos/artifact_stores.py`
+- `docos/review/queue.py`
+- `docos/lint/checker.py`
 
 ### 验收标准
-- 被标记冲突的 claim 在知识层状态真实更新。
-- deprecate 前后 claim 内容除状态变化外不丢字段。
-- entity dedup 审批后能真正更新 entity graph。
 
-### 影响文件
-- `docos/knowledge/ops.py`
+- 新页面、更新页面、删除页面都能产生 patch
+- patch_id 在重复运行同一输入时保持稳定
+- patch 可以被 apply/merge/rollback
+- review item 能追溯到具体 patch
+- `Re-ingest Diff Stability` 有真实可测基础
 
 ---
 
-## REQ-P1-006：CLI 需要从演示命令升级为真正的操作入口
+## P0-06：让 lint / harness / gate 基于真实 artifacts 运行
+
+### 目标
+`Lint -> Harness -> Gate` 必须不再是“形式存在”，而是正式的发布门禁链。
 
 ### 当前问题
-CLI 现在更像 demo：
-- `ingest` 只注册 source
-- `route` 只返回静态决策
-- `review approve/reject` 只打印文本
-- `report` 只打印 not found
+- `lint` 当前没有读取真实 pages/claims/entities
+- `eval` 尚未对接完整 DocIR/Knowledge/Patch/WikiState
+- gate 还没有真正绑定 config 中的 release rules
 
-### 要求
-将 CLI 升级为真实入口：
-- `docos ingest <file> --run`
-- `docos parse <source_id|run_id>`
-- `docos compile <run_id>`
-- `docos patch list/apply/merge/rollback`
-- `docos review list/show/approve/reject/request-changes`
-- `docos report <run_id>`
+### 必须实现
+
+1. `lint` 必须读取真实 artifacts：
+   - wiki pages
+   - claims
+   - entities
+   - anchors
+   - patch
+
+2. `HarnessRunner` 必须消费真实 artifacts，而不是默认空值：
+   - parse quality
+   - knowledge quality
+   - maintenance quality
+
+3. `release_gates` 必须真正控制 merge / review：
+   - block_on_p0_lint
+   - block_on_p1_lint
+   - block_on_missing_harness
+   - block_on_fallback_low_confidence
+   - block_on_regression_exceeded
+
+4. `report` 必须输出清晰的 gate decision：
+   - `auto_merge`
+   - `review_required`
+   - `blocked`
+
+### 涉及文件
+
+- `docos/lint/checker.py`
+- `docos/harness/runner.py`
+- `docos/artifact_stores.py`
+- `configs/router.yaml`
+- `docos/cli/main.py`
 
 ### 验收标准
-- CLI 的所有命令都有真实状态输出。
-- 不再保留“not yet connected”类命令。
+
+- P0 lint fail 时，不能 auto-merge
+- harness 缺失时，不能 auto-merge
+- fallback 低置信度时，必须进入 review
+- report 中能看到真实 gate reason
 
 ---
 
-## REQ-P1-007：把 skills 做成 domain skills，而不是 generic skills
+## P0-07：补齐真实端到端 regression fixtures
+
+### 目标
+必须用真实 raw fixtures 验证系统闭环，而不是只测中间对象。
 
 ### 当前问题
-当前 `.agents/skills/` 目录主要还是通用 skill（如 browser / prd / ralph），并没有真正把 document parsing wiki 的核心能力沉淀成 skill contract。
+现有 workflow tests 已经不错，但仍偏向从构造 DocIR 开始，而不是从 raw 文档开始验证闭环。
 
-### 要求
-新增以下 domain skills：
-- `route-document`
-- `parse-to-docir`
-- `normalize-structure`
-- `extract-entities-claims`
-- `generate-page-patch`
-- `lint-reconcile`
-- `review-route`
-- `query-wiki-grounded`
+### 必须实现
 
-同时把 workflow 与 skill 分离：
-- `skills/` 只定义 contract
-- `workflow/` 负责编排
+至少新增以下 fixtures：
+
+1. **simple_text.pdf**
+   - 单栏、文本主导、无需 OCR
+   - 期望命中 fast route 或 fallback safe route
+
+2. **dual_column_or_formula.pdf**
+   - 双栏或公式密集
+   - 期望命中 complex / table_formula route
+
+3. **ocr_like.pdf 或 image input**
+   - OCR 优先
+   - 期望命中 OCR route
+
+### 必须新增的集成测试
+
+1. raw fixture -> route
+2. raw fixture -> parse
+3. raw fixture -> parse -> normalize -> extract
+4. raw fixture -> full pipeline -> report
+5. 同一 fixture 重跑 -> patch_id / entity_id / claim_id 稳定性检查
+
+### 涉及文件
+
+- `tests/test_workflow.py`
+- 新增 `tests/test_e2e_pipeline.py`
+- 新增 `tests/fixtures/*`
 
 ### 验收标准
-- 任一 skill 都有：输入 schema、输出 schema、invariants、fallback、eval。
-- `.agents/skills` 与 repo 的真实系统目标一致。
+
+- CI 中存在至少 1 条真正的 full pipeline test
+- 至少 3 类 route 被 fixtures 覆盖
+- 同一文档重跑时 ID 稳定性可验证
+- 失败时能保留 debug artifact 便于定位
 
 ---
 
-## REQ-P1-008：修复 README / repo / skills 三者之间的漂移
-
-### 当前问题
-当前存在多处“文档比实现走得更远”的情况：
-- README 描述的是完整系统，但 CLI 和 patch lifecycle 尚未打通。
-- README 提到 `schemas/`，当前仓库根目录可见结构里未体现该目录。
-- README 以“8 page types”表述，但当前 content model 与 compiler 尚未完整闭环。
-
-### 要求
-- README 只能声明当前已实现能力与明确 roadmap。
-- `schemas/` 若为目标产物，则必须落盘导出；否则从 README 删除。
-- skills、CLI、目录结构、设计文档必须保持一致。
-
-### 验收标准
-- 新人只看 README，就能正确理解系统当前能力边界。
-- 文档与实现不再相互误导。
+# 6. P1 应做需求（建议本阶段后半完成）
 
 ---
 
-## REQ-P1-009：补充 end-to-end 测试与 golden fixtures
+## P1-01：把 Skills 从文档契约升级为运行时单元
 
-### 当前问题
-当前 tests 以模块级单元测试为主，缺少覆盖：
-- 实际 ingest 闭环
-- re-ingest stability
-- patch lifecycle
-- fallback route
-- review / merge / rollback
-- golden doc fixtures
+### 目标
+让 `.agents/skills/*` 不只是说明书，而是系统的一等执行单元。
 
-### 要求
-增加三类测试：
-- module unit tests
-- workflow integration tests
-- golden document regression tests
+### 必须实现
+
+1. 每个 skill 必须映射到一个真实 runtime entrypoint，例如：
+   - `docos-route` -> `docos route`
+   - `docos-parse` -> `docos parse`
+   - `docos-extract` -> `docos extract`
+   - `docos-patch` -> patch service / CLI
+   - `docos-lint` -> lint profile runner
+   - `docos-review` -> queue submit/resolve
+
+2. 每个 skill 必须有 contract tests，验证：
+   - Input
+   - Output
+   - Invariants
+   - Fallback
+   - Evaluation
+
+3. skills 文档与 runtime 行为必须双向一致。
+
+### 涉及文件
+
+- `.agents/skills/*`
+- `docos/cli/main.py`
+- `tests/`
 
 ### 验收标准
-- 至少有 1 个 simple PDF fixture + 1 个 complex fixture。
-- CI 能跑通最小端到端流程。
-- re-ingest 稳定性有明确基线指标。
+
+- 每个 domain skill 都有对应入口
+- 每个 skill 都有 contract tests
+- skill 文档中声明的 invariant 在测试里能被验证
 
 ---
 
-## REQ-P1-010：依赖管理改成 extras 分层
+## P1-02：补齐 8 类页面类型的真实编译覆盖
 
-### 当前问题
-`pyproject.toml` 当前只有基础依赖，不适合真实 parser / OCR / LLM integration。
+### 目标
+`PageType` 已经声明 8 类页面，必须让这些页面在编译和测试中真正闭环。
 
-### 要求
-按能力拆 optional extras，例如：
-- `[project.optional-dependencies].parsers`
-- `.ocr`
-- `.llm`
-- `.dev`
+### 必须实现
+
+至少补齐以下 page types 的 compile + test：
+
+- `parser`
+- `benchmark`
+
+并确保以下已有页面类型继续可用：
+
+- `source`
+- `entity`
+- `concept`
+- `failure`
+- `comparison`
+- `decision`
+
+### 涉及文件
+
+- `docos/models/page.py`
+- `docos/wiki/compiler.py`
+- `tests/test_wiki_*`
 
 ### 验收标准
-- 用户可按 route 需求安装依赖，而不是一次性装满。
-- README 提供最小安装与全量安装两种方式。
+
+- 8 类页面均有 compile path
+- 8 类页面均有测试
+- 对应 frontmatter/body schema 稳定
 
 ---
 
-## 7. P2 requirements（闭环后再做）
+## P1-03：增强运行可观测性与调试资产
 
-## REQ-P2-001：导出真实 schema artifacts
+### 目标
+让每次 run 都能被定位、复盘、对比。
 
-### 要求
-从 Pydantic 模型导出：
-- `schemas/doc.schema.json`
-- `schemas/knowledge.schema.json`
-- `schemas/page.schema.json`
-- `schemas/patch.schema.json`
+### 必须实现
+
+1. `RunManifest` 中补齐：
+   - selected_route
+   - parser_chain
+   - fallback_used
+   - lint summary
+   - harness summary
+   - gate decision
+   - review status
+
+2. 每个 stage 记录：
+   - started_at / finished_at / duration_ms
+   - warnings
+   - error_detail
+
+3. Debug assets 最少包括：
+   - route log
+   - parser raw result
+   - fallback trace
+   - repair log
+   - lint findings
+   - harness report
 
 ### 验收标准
-- 仓库中存在可供外部工具直接消费的 schema 文件。
-- schema version 变更有 migration 说明。
+
+- 任意 run 都能从 report 追到全部核心 artifacts
+- 任意失败都能快速定位到阶段和原因
 
 ---
 
-## REQ-P2-002：建设 review / evidence 可视化界面
+## P1-04：文档与实现一致性治理
 
-### 要求
-在 Obsidian 之外补一个 review console，支持：
-- 原始页面渲染
+### 目标
+避免 README 继续领先于实际实现，确保仓库对外表达与系统能力一致。
+
+### 必须实现
+
+1. README 中的命令、流程、page types、parser 列表必须与当前实现一致。
+2. 若某功能仍为 roadmap，必须明确标注，不得写成“已经完成”。
+3. 补充 `schemas/` 或 schema 导出产物：
+   - `doc.schema.json`
+   - `page.schema.json / yaml`
+   - `patch.schema.json`
+
+### 验收标准
+
+- README 中的每个 CLI 命令都可运行
+- README 中声明的 parser / page type / pipeline 与代码一致
+- schema artifacts 可供外部审查
+
+---
+
+# 7. P2 后续需求（不是当前阻塞项）
+
+---
+
+## P2-01：引入 hybrid / LLM-assisted extraction
+
+### 目标
+在 deterministic baseline 稳定后，再提升知识抽取质量。
+
+### 内容
+
+- LLM-assisted entity extraction
+- claim synthesis with evidence anchors
+- conflict resolution suggestion
+- low confidence repair suggestion
+
+### 前提
+
+只有在以下条件满足后才开始：
+
+- P0 全部完成
+- P1 大部分完成
+- 真实 regression 已稳定
+
+---
+
+## P2-02：扩展 parser adapter 矩阵
+
+### 目标
+让 router 中声明的更多 parser 有正式 adapter。
+
+### 内容
+
+- marker adapter
+- pdfplumber adapter
+- OCR adapter abstraction
+- parser capability metadata
+- parser benchmark profile page
+
+### 注意
+
+扩 parser 数量之前，必须先确保 registry、orchestrator、route validation 已稳定。
+
+---
+
+## P2-03：Review Console / 可视化审阅台
+
+### 目标
+把 parsing wiki 从 CLI kernel 推进到真正可操作的 review UX。
+
+### 内容
+
+- page render view
 - bbox overlay
-- claim → evidence drilldown
-- parser A/B diff
+- route diff
+- parser diff
 - patch diff review
-
-### 验收标准
-- reviewer 不需要直接读 JSON 才能做判断。
+- claim -> evidence drilldown
 
 ---
 
-## REQ-P2-003：支持多 domain / 多 MIME type 扩展
+# 8. 文件级改造清单
 
-### 要求
-在 PDF 打透后，再扩展到：
-- image docs
-- docx
-- slides
-- mixed corpora
+## 8.1 必改文件
 
-### 验收标准
-- 不在当前 P0/P1 阶段强行做成通用平台。
+- `docos/cli/main.py`
+- `docos/pipeline/router.py`
+- `docos/pipeline/signal_extractor.py`
+- `docos/pipeline/parser.py`
+- `docos/pipeline/orchestrator.py`
+- `docos/wiki/compiler.py`
+- `docos/models/patch.py`
+- `docos/harness/runner.py`
+- `docos/lint/checker.py`
+- `configs/router.yaml`
+- `pyproject.toml`
+- `tests/test_workflow.py`
 
----
+## 8.2 高概率新增文件
 
-## 8. 关键代码问题清单（按文件归档）
-
-## 8.1 `docos/cli/main.py`
-- `route` 读取的是伪 `SourceRecord` 和写死的 PDF signal。
-- `parse / normalize / extract / compile / lint / eval / report` 都未接入真实状态。
-- `review approve/reject` 只是打印，不会修改 ReviewQueue。
-
-## 8.2 `docos/pipeline/router.py`
-- score 未使用全部 signal。
-- `max_pages` 语义过弱。
-- route 没有接 parser health / capability。
-
-## 8.3 `docos/pipeline/orchestrator.py`
-- 只对成功解析导出 debug assets。
-- 没有 attempt 级 health / timeout / persistence。
-
-## 8.4 `docos/pipeline/normalizer.py`
-- `_convert_block()` 丢字段。  
-- global repair 后 `Page.blocks` 不重建。  
-- heading shift 有 bug。  
-- caption relation 修复不更新 block-level target。  
-- cross-page continuation 规则过粗糙。
-
-## 8.5 `docos/models/docir.py`
-- 文档声明的 invariant 未完全实现。  
-- 缺少 page/block/relation cross-validation。
-
-## 8.6 `docos/models/page.py`
-- `PageType` 有 8 种，但 `PAGE_CONTENT_MAP` 只有 6 种。  
-- 缺少 parser/benchmark content contract。
-
-## 8.7 `docos/wiki/compiler.py`
-- 实质是 Markdown renderer，不是 patch compiler。  
-- frontmatter 用手工 YAML。  
-- update 会重置 `created_at`。  
-- 未生成 patch / diff / blast / risk。
-
-## 8.8 `docos/knowledge/extractor.py`
-- 随机 ID 破坏 determinism。  
-- section claim 抽取范围不准确。  
-- relation 逻辑过于脆弱。  
-- anchor 信息不完整。
-
-## 8.9 `docos/knowledge/ops.py`
-- `mark_conflict()` 没更新 claim。  
-- `deprecate_claim()` 会丢 `object_value`。  
-- dedup 与 review queue 未打通。  
-- 底部 `Literal` import 需要清理。
-
-## 8.10 `docos/review/queue.py`
-- 初始化不 reload。  
-- `request_changes` 不落盘。  
-- queue/approved/rejected 生命周期不清楚。
-
-## 8.11 `docos/lint/checker.py`
-- lint 对 page body / wikilink / anchor coverage 无感知。  
-- `ReleaseGate` 没真正配置化。  
-- `docir` 参数未消费。
-
-## 8.12 `docos/harness/runner.py`
-- parse quality 过于粗糙。  
-- maintenance quality 太窄。  
-- unsupported metric 与 model validation 高度重叠。  
-- regression 检查太轻。
-
-## 8.13 `pyproject.toml`
-- 缺少 parser / OCR / LLM provider extras。  
-- 当前依赖不足以支撑 README 描述的真实功能。
-
-## 8.14 repo structure / `.agents/skills`
-- README 所描述的系统能力与当前 skill 目录不一致。  
-- 缺少 document parsing wiki 的 domain skills。
+- `tests/test_e2e_pipeline.py`
+- `tests/test_router_registry_alignment.py`
+- `tests/test_patch_lifecycle.py`
+- `tests/test_skill_contracts.py`
+- `tests/fixtures/simple_text.pdf`
+- `tests/fixtures/dual_column_or_formula.pdf`
+- `tests/fixtures/ocr_like.pdf`
+- `docos/pipeline/runner.py` 或 `docos/workflow/run_pipeline.py`
 
 ---
 
-## 9. 推荐实施顺序
+# 9. 推荐实施顺序
 
-### 阶段 1：打穿闭环（必须优先）
-1. REQ-P0-001 最小闭环
-2. REQ-P0-002 持久化层
-3. REQ-P0-003 真实 signal extraction
-4. REQ-P0-004 concrete parser adapters
-5. REQ-P0-005 patch lifecycle
+## 阶段 1：先打穿最小闭环
 
-### 阶段 2：修系统一致性
-6. REQ-P0-006 deterministic IDs
-7. REQ-P0-007 DocIR invariants
-8. REQ-P0-008 / 009 / 010 normalizer 修复
-9. REQ-P0-011 review queue durability
-10. REQ-P0-012 / 013 / 014 page/compiler closure
-11. REQ-P0-015 lint/harness/gate 真接入
+1. `docos run` 统一入口
+2. `parse` 改为走 route + registry + orchestrator
+3. `normalize/extract/compile` 接真实 artifacts
+4. `lint/eval/report` 接真实 artifacts
+5. 完成 full pipeline test
 
-### 阶段 3：做成可维护产品
-12. REQ-P1-001 ~ REQ-P1-010
-13. 再开始做 parser 扩展、review UI、多 domain
+## 阶段 2：再修系统正确性
 
----
+1. 修 dual-column detection
+2. 修 formula routing
+3. 修 config/runtime alignment
+4. 修 patch lifecycle
+5. 修 gate/review 联动
 
-## 10. 本轮优化完成的 Definition of Done
+## 阶段 3：再做产品化和技能化
 
-当且仅当满足以下条件，本轮优化才算完成：
+1. skill runtime 化
+2. page type 完整覆盖
+3. schema 导出
+4. README 与实现一致化
 
-1. `docos ingest <file>` 能产生真实 `run_id`。  
-2. 可以从 run_id 追到 source、DocIR、knowledge、patch、lint、harness、review。  
-3. wiki 页面变更全部经过 patch。  
-4. 同一文档重复 ingest，核心 knowledge IDs 稳定。  
-5. review queue 可重启恢复。  
-6. README 不再宣称未实现能力。  
-7. `.agents/skills` 中存在真正的 domain-specific LLM wiki skills。  
-8. 至少有 1 组 golden fixtures 跑通完整回归。
+## 阶段 4：最后做能力增强
+
+1. hybrid extraction
+2. 更多 parser adapter
+3. review console
 
 ---
 
-## 11. 一句话结论
+# 10. 本阶段完成定义（Definition of Done）
 
-当前仓库**不是方向错了**，而是典型的：
+只有满足以下条件，才能认为这轮优化完成：
 
-> **架构已经到位，但系统闭环、状态持久化、determinism、patch/review/harness 还没有落地。**
+1. 存在一条从 raw fixture 到 report 的真实可执行金路径
+2. `parse` 不再绕过 router/registry/orchestrator
+3. router config 与 runtime parser 完全对齐
+4. dual-column / formula signals 能真实影响路由
+5. patch 成为正式状态转换层，并支持 deterministic patch_id
+6. lint / harness / gate 基于真实 artifacts 生效
+7. 至少 1 条 full pipeline regression test 纳入 CI
+8. skills 有 runtime entrypoints 和 contract tests
+9. README 与实际实现一致
 
-所以优化重点不该再是“多加模块”，而应当是：
+---
 
-> **把一条最小闭环打通，并让它可审计、可恢复、可回归。**
+# 11. 最终一句话总结
 
+下一阶段最重要的，不是“再加更多模块”，而是：
+
+> **把 README 里已经声明的系统能力，全部落实为统一 artifact 驱动、run manifest 可追踪、patch/gate 真正生效的最小闭环执行链。**
+
+只有这一步做完，`harness-llm-wiki` 才会从“方向很对的系统内核”真正进入“可持续演进的 Document Knowledge Compiler”。
