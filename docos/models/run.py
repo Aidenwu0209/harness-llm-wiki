@@ -124,6 +124,12 @@ class RunManifest(BaseModel):
     release_reasoning: list[str] = Field(default_factory=list, description="Reasoning for the release decision")
     review_status: str | None = Field(default=None, description="Current review status (pending/approved/rejected/none)")
 
+    # Manual override audit fields (US-026)
+    override_reviewer: str | None = Field(default=None, description="Identity of the reviewer who overrode the gate")
+    override_reason: str | None = Field(default=None, description="Required reason for the manual override")
+    override_timestamp: datetime | None = Field(default=None, description="When the override was applied")
+    overridden_checks: list[str] = Field(default_factory=list, description="Which gate checks were overridden")
+
     def mark_stage(self, name: str, status: StageStatus, error_detail: str | None = None) -> None:
         """Update a stage's status by name."""
         for stage in self.stages:

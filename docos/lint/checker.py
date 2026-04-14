@@ -7,6 +7,7 @@ unsupported claims, duplicate entities, and other quality issues.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -254,6 +255,18 @@ class WikiLinter:
 # Release gate
 # ---------------------------------------------------------------------------
 
+@dataclass
+class OverrideAuditRecord:
+    """Audit record for a manual gate override."""
+
+    reviewer: str
+    reason: str
+    overridden_checks: list[str]
+    timestamp: datetime
+    original_gate_decision: str
+    overridden_gate_decision: str = "override_approved"
+
+
 class ReleaseGate:
     """Determines whether a patch can be auto-merged.
 
@@ -323,3 +336,35 @@ class ReleaseGate:
 
         can_merge = len(reasons) == 0
         return can_merge, reasons
+
+    def override(
+        self,
+        reviewer: str,
+        reason: str,
+        overridden_checks: list[str],
+        original_decision: str = "blocked",
+    ) -> OverrideAuditRecord:
+        """Create a manual override audit record.
+
+        Args:
+            reviewer: Identity of the reviewer performing the override.
+            reason: Required reason for the override (must not be empty).
+            overridden_checks: List of gate check names being overridden.
+            original_decision: The gate decision before the override.
+
+        Returns:
+            OverrideAuditRecord with all audit fields.
+
+        Raises:
+            ValueError: If reason is empty.
+        """
+        if not reason.strip():
+            msg = "Override reason is required and cannot be empty"
+            raise ValueError(msg)
+        return OverrideAuditRecord(
+            reviewer=reviewer,
+            reason=reason,
+            overridden_checks=overridden_checks,
+            timestamp=datetime.now(),
+            original_gate_decision=original_decision,
+        )

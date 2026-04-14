@@ -100,6 +100,32 @@ def _build_ocr_like_pdf() -> bytes:
     )
 
 
+def _build_table_formula_pdf() -> bytes:
+    """Create a PDF with table and formula content (table/formula-heavy signals)."""
+    return (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]\n"
+        b"   /Contents 4 0 R >>\nendobj\n"
+        b"4 0 obj\n<< /Length 500 >>\nstream\n"
+        b"BT /F1 18 Tf 100 700 Td (Benchmark Results for Alpha Model) Tj ET\n"
+        b"BT /F1 12 Tf 100 670 Td (Table 1: Performance comparison across datasets) Tj ET\n"
+        # Table-like content
+        b"BT /F1 10 Tf 72 640 Td (Dataset     Accuracy   F1-Score   Latency) Tj ET\n"
+        b"BT /F1 10 Tf 72 620 Td (MNIST        99.2%      0.991      12ms) Tj ET\n"
+        b"BT /F1 10 Tf 72 600 Td (CIFAR-10     95.7%      0.956      45ms) Tj ET\n"
+        b"BT /F1 10 Tf 72 580 Td (ImageNet     82.3%      0.821      120ms) Tj ET\n"
+        # Formula-like content
+        b"BT /F1 12 Tf 100 540 Td (The loss function is: L = -sum(y_i * log(p_i))) Tj ET\n"
+        b"BT /F1 12 Tf 100 510 Td (Gradient update: theta = theta - alpha * gradient) Tj ET\n"
+        b"BT /F1 12 Tf 100 480 Td (The attention mechanism uses softmax(QK^T / sqrt(d))) Tj ET\n"
+        b"endstream\nendobj\n"
+        b"trailer\n<< /Size 5 /Root 1 0 R >>\n%%EOF"
+    )
+
+
 def get_fixture(name: str) -> Path:
     """Get a fixture file path, building it if necessary.
 
@@ -109,6 +135,7 @@ def get_fixture(name: str) -> Path:
         "simple_text": _build_simple_pdf,
         "dual_column_or_formula": _build_dual_column_pdf,
         "ocr_like": _build_ocr_like_pdf,
+        "table_formula": _build_table_formula_pdf,
     }
     if name not in builders:
         msg = f"Unknown fixture: {name}. Available: {list(builders.keys())}"
@@ -122,4 +149,4 @@ def get_fixture(name: str) -> Path:
 
 def get_all_fixtures() -> dict[str, Path]:
     """Get all fixture file paths, building them if necessary."""
-    return {name: get_fixture(name) for name in ["simple_text", "dual_column_or_formula", "ocr_like"]}
+    return {name: get_fixture(name) for name in ["simple_text", "dual_column_or_formula", "ocr_like", "table_formula"]}
