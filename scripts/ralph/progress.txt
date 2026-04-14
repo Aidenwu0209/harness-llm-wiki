@@ -328,3 +328,12 @@
   - manifest.fallback_used is True when fallback parser is used
   - test_rerun_report_us008.py and test_config.py failures are from missing CLI rerun command and config format changes (not my stories)
 ---
+
+## [2026-04-15 19:15] - US-030
+- Verified docos/skills_mapping.py already maps all 6 skills to runtime entrypoints
+- Skills: docos-route, docos-parse, docos-extract, docos-patch, docos-lint, docos-review
+- Each maps to a real CLI command with module and function references
+- Skills mapping JSON file exists at .agents/skills/skills_entrypoints.json
+- Tests in tests/test_skill_entrypoints_us031.py verify all mappings
+- **Changed files:** scripts/ralph/prd.json (passes: true)
+---
