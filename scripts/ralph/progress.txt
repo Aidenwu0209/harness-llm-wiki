@@ -357,3 +357,12 @@
 - Verifies schema properties match actual Pydantic model fields
 - **Changed files:** schemas/doc.schema.json (new), schemas/generate_schemas.py, schemas/*.schema.json (regenerated), tests/test_schema_alignment_us032.py, scripts/ralph/prd.json
 ---
+
+## [2026-04-15 19:50] - US-033
+- Verified test_golden_loop_us036.py and test_golden_closed_loop_us036.py fully cover US-033
+- Golden fixture run produces all artifacts: ingest, route, parse, normalize, extract, compile, patch, lint, eval, gate, report
+- docos report shows route, parser chain, gate decision for golden run
+- Rerun preserves stable identifiers: source_id, route choice, patch_id, entity_id, claim_id
+- Golden-path regression stays green across 15 tests
+- **Changed files:** scripts/ralph/prd.json (passes: true)
+---
