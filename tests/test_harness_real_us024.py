@@ -18,6 +18,8 @@ from docos.models.knowledge import (
 )
 from docos.models.page import Frontmatter, PageStatus, PageType, ReviewStatus
 from docos.models.patch import Change, ChangeType, Patch
+from docos.models.run import RunManifest, RunStatus
+from docos.run_store import RunStore
 
 
 def _make_docir() -> DocIR:
@@ -275,13 +277,26 @@ class TestHarnessRealArtifacts:
         assert report.release_decision != "auto_merge"
 
     def test_harness_linked_from_manifest(self) -> None:
-        """Verify harness report can be linked from a run manifest via report path."""
+        """Verify RunManifest links to the persisted harness report artifact."""
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
 
+            run_id = "run_manifest_link_test"
+
+            # Create and persist a RunManifest
+            run_store = RunStore(base)
+            manifest = RunManifest.create(
+                run_id=run_id,
+                source_id="src_005",
+                source_file_path="/tmp/test.pdf",
+                artifact_root=str(base / "artifacts" / run_id),
+            )
+            run_store.update(manifest)
+
+            # Run harness
             runner = HarnessRunner()
             report = runner.run(
-                run_id="run_005",
+                run_id=run_id,
                 source_id="src_005",
                 docir=_make_docir(),
                 claims=_make_claims(),
@@ -289,14 +304,23 @@ class TestHarnessRealArtifacts:
                 patch=_make_patch(),
             )
 
+            # Persist report
             report_store = ReportStore(base / "reports")
-            report_store.save(report)
+            report_path = report_store.save(report)
 
-            # Simulate manifest pointing to the report artifact
-            report_artifact_path = base / "reports" / "run_005.json"
-            assert report_artifact_path.exists()
+            # Link the report path in the manifest (as pipeline runner does)
+            manifest.report_artifact_path = str(report_path)
+            run_store.update(manifest)
 
-            # Load and verify
-            loaded = report_store.get("run_005")
-            assert loaded is not None
-            assert loaded.overall_passed is True
+            # Reload manifest and verify the link
+            loaded_manifest = run_store.get(run_id)
+            assert loaded_manifest is not None
+            assert loaded_manifest.report_artifact_path is not None
+            assert Path(loaded_manifest.report_artifact_path).exists()
+
+            # Verify the linked report content
+            report_artifact_path = Path(loaded_manifest.report_artifact_path)
+            report_data = json.loads(report_artifact_path.read_text(encoding="utf-8"))
+            assert report_data["run_id"] == run_id
+            assert report_data["overall_passed"] is True
+            assert report_data["release_decision"] == "auto_merge"
