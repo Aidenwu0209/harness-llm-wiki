@@ -173,3 +173,18 @@
   - Patch.stage() recalculates review_required; manual setting gets overridden
   - WikiStore uses sanitized page_path as key (slashes to underscores)
 ---
+
+## 2026-04-15 - US-030
+- Enhanced tests/test_rerun_stability_us030.py from 5 to 9 tests covering all acceptance criteria
+- Added test_stable_patch_ids_on_rerun: verifies patch_id values are identical across two pipeline runs with same fixture
+- Added test_stable_patch_ids_via_persisted_artifacts: verifies persisted patch artifacts (via PatchStore) have stable IDs
+- Added test_failure_path_debug_artifacts_preserved: verifies all artifact paths referenced in manifest exist on disk and manifest is reloadable
+- Added test_rerun_produces_comparable_artifacts: verifies both runs produce complete artifact sets (manifests, knowledge) with equal entity/claim counts
+- All 9 tests pass; mypy clean (41 files); 659 total tests pass
+- **Files changed:** tests/test_rerun_stability_us030.py, scripts/ralph/prd.json
+- **Future iterations learning:**
+  - PatchStore saves as `<patch_id>.json` but manifest.patch_artifact_path does NOT include `.json` suffix
+  - RunStore persists manifests at `<base_dir>/manifests/<run_id>.json` (not `runs/`)
+  - CompiledPage.compute_patch() uses SHA-256 of body content → deterministic patch_id for same content regardless of run_id
+  - KnowledgeExtractionPipeline produces deterministic entity_id/claim_id values from same DocIR content
+---
