@@ -352,9 +352,8 @@ def review_reject(review_id: str, reviewer: str, reason: str) -> None:
 @cli.command()
 @click.argument("run_id")
 def report(run_id: str) -> None:
-    """Show ingest report for a run."""
+    """Show run report from persisted artifacts."""
     from docos.artifact_stores import PatchStore, ReportStore, WikiStore
-    from docos.debug_store import DebugAssetStore
     from docos.ir_store import IRStore
     from docos.knowledge_store import KnowledgeStore
     from docos.run_store import RunStore
@@ -367,26 +366,51 @@ def report(run_id: str) -> None:
         click.echo(json.dumps({"error": f"Run not found: {run_id}"}))
         raise SystemExit(1)
 
-    # Collect persisted data
+    # Core run info
     result: dict[str, object] = {
         "run_id": run_id,
         "source_id": manifest.source_id,
         "status": manifest.status.value,
         "source_file_path": manifest.source_file_path,
+        "started_at": manifest.started_at.isoformat() if manifest.started_at else None,
+        "finished_at": manifest.finished_at.isoformat() if manifest.finished_at else None,
     }
 
-    # Stages summary
+    # Stages summary with error detail
     stages = [
         {"name": s.name, "status": s.status.value, "error": s.error_detail}
         for s in manifest.stages
     ]
     result["stages"] = stages
 
+    # Failed stage highlighting
+    failed = [s for s in manifest.stages if s.status.value == "failed"]
+    if failed:
+        result["failed_stage"] = failed[0].name
+        result["error_detail"] = failed[0].error_detail
+
+    # Route decision
+    if manifest.route_artifact_path and Path(manifest.route_artifact_path).exists():
+        route_data = json.loads(Path(manifest.route_artifact_path).read_text())
+        result["route"] = route_data
+    else:
+        result["route"] = "not-generated-yet"
+
+    # Parser info (from route decision)
+    if isinstance(result.get("route"), dict):
+        route_info = result["route"]
+        assert isinstance(route_info, dict)
+        result["parser_chain"] = {
+            "primary": route_info.get("primary_parser"),
+            "fallbacks": route_info.get("fallback_parsers"),
+        }
+
     # IR artifact
     ir_store = IRStore(base / "ir")
     ir = ir_store.get(run_id)
     result["ir_artifact"] = str(manifest.ir_artifact_path) if manifest.ir_artifact_path else "not-generated-yet"
     result["ir_pages"] = ir.page_count if ir else None
+    result["ir_blocks"] = len(ir.blocks) if ir else None
 
     # Knowledge artifact
     ks = KnowledgeStore(base / "knowledge")
@@ -398,8 +422,15 @@ def report(run_id: str) -> None:
         result["relation_count"] = len(knowledge.relations)
 
     # Patch artifact
-    ps = PatchStore(base / "patches")
     result["patch_artifact"] = str(manifest.patch_artifact_path) if manifest.patch_artifact_path else "not-generated-yet"
+
+    # Lint findings
+    if manifest.lint_artifact_path and Path(manifest.lint_artifact_path).exists():
+        lint_data = json.loads(Path(manifest.lint_artifact_path).read_text())
+        result["lint_findings"] = len(lint_data)
+        result["lint_artifact"] = manifest.lint_artifact_path
+    else:
+        result["lint_findings"] = "not-generated-yet"
 
     # Harness report
     rs = ReportStore(base / "reports")
@@ -407,16 +438,23 @@ def report(run_id: str) -> None:
     result["harness_status"] = harness_report.release_decision if harness_report else "not-generated-yet"
     result["harness_passed"] = harness_report.overall_passed if harness_report else None
 
-    # Review status (check if any review items exist for this run)
+    # Gate decision — derived from lint + harness
+    if manifest.report_artifact_path:
+        result["gate_decision"] = "passed" if result.get("harness_passed") else "blocked"
+
+    # Review status
     from docos.review.queue import ReviewQueue
     rq = ReviewQueue(base / "review")
     pending = rq.list_pending()
     run_reviews = [r for r in pending if run_id in r.target_object_id or run_id in r.source_id]
-    result["review_status"] = "pending" if run_reviews else "not-generated-yet"
+    result["review_status"] = "pending" if run_reviews else "none"
 
-    # Debug assets — check if any exist for this run
-    debug_base = base / "debug" / manifest.source_id / run_id
-    result["debug_assets"] = "available" if debug_base.exists() else "not-generated-yet"
+    # Debug assets
+    if manifest.debug_artifact_path:
+        result["debug_assets"] = "available"
+    else:
+        debug_base = base / "debug" / manifest.source_id / run_id
+        result["debug_assets"] = "available" if debug_base.exists() else "none"
 
     click.echo(json.dumps(result, indent=2, default=str))
 
