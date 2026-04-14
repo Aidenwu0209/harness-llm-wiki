@@ -52,6 +52,16 @@ class DocumentSignals:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class RouteAuditEntry:
+    """Score and disposition for a single candidate route."""
+
+    route_name: str
+    score: int
+    accepted: bool
+    rejection_reason: str = ""
+
+
+@dataclass
 class RouteDecision:
     """The result of route selection.
 
@@ -68,6 +78,9 @@ class RouteDecision:
     # Why this route was chosen
     matched_signals: dict[str, Any] = field(default_factory=dict)
     decision_reason: str = ""
+
+    # Per-route audit trail: scores, accepted/rejected, and reasons
+    route_scores: list[RouteAuditEntry] = field(default_factory=list)
 
     # Metadata
     decided_at: datetime = field(default_factory=datetime.now)
@@ -105,6 +118,15 @@ class RouteLogEntry:
                 "is_formula_heavy": self.signals.is_formula_heavy,
                 "is_image_heavy": self.signals.is_image_heavy,
             },
+            "route_scores": [
+                {
+                    "route_name": e.route_name,
+                    "score": e.score,
+                    "accepted": e.accepted,
+                    "rejection_reason": e.rejection_reason,
+                }
+                for e in self.decision.route_scores
+            ],
         }
 
 
@@ -136,11 +158,12 @@ class ParserRouter:
             signals: Extracted document signals.
 
         Returns:
-            A RouteDecision with explicit parser plan and review policy.
+            A RouteDecision with explicit parser plan, review policy, and
+            per-route audit trail.
         """
-        best_route = self._match_route(signals)
+        best_route, audit_entries = self._match_route(signals)
         assert best_route is not None  # guaranteed by config having at least default route
-        decision = self._build_decision(best_route, signals)
+        decision = self._build_decision(best_route, signals, audit_entries)
         entry = RouteLogEntry(source_id=source.source_id, decision=decision, signals=signals)
 
         self._log_entries.append(entry)
@@ -156,18 +179,38 @@ class ParserRouter:
 
         return decision
 
-    def _match_route(self, signals: DocumentSignals) -> ParserRoute | None:
+    def _match_route(self, signals: DocumentSignals) -> tuple[ParserRoute | None, list[RouteAuditEntry]]:
         """Match signals against configured routes.
 
         Strategy: iterate all routes, score each by how many criteria match,
         return the highest-scoring route. Tiebreak by route order in config.
+
+        Returns:
+            A tuple of (best route or None, list of audit entries for every
+            candidate route).
         """
         routes = self._config.router.routes
         best_score = -1
         best_route: ParserRoute | None = None
+        audit_entries: list[RouteAuditEntry] = []
 
         for route in routes:
             score = self._score_route(route, signals)
+
+            # Determine rejection reason for low-scoring routes
+            rejection_reason = ""
+            if score == 0 and route.file_types and signals.file_type not in route.file_types:
+                rejection_reason = f"file_type mismatch: route wants {route.file_types}, got '{signals.file_type}'"
+            elif score == 0:
+                rejection_reason = "no matching criteria"
+
+            audit_entries.append(RouteAuditEntry(
+                route_name=route.name,
+                score=score,
+                accepted=False,  # will mark the winner below
+                rejection_reason=rejection_reason,
+            ))
+
             if score > best_score:
                 best_score = score
                 best_route = route
@@ -177,12 +220,24 @@ class ParserRouter:
             default_name = self._config.router.default_route
             for route in routes:
                 if route.name == default_name:
-                    return route
+                    # Mark the default as accepted in audit
+                    for entry in audit_entries:
+                        entry.accepted = entry.route_name == default_name
+                    return route, audit_entries
             # Ultimate fallback: first route
             if routes:
-                return routes[0]
+                for entry in audit_entries:
+                    entry.accepted = entry.route_name == routes[0].name
+                return routes[0], audit_entries
 
-        return best_route
+        # Mark the winning route as accepted
+        if best_route is not None:
+            for entry in audit_entries:
+                if entry.route_name == best_route.name:
+                    entry.accepted = True
+                    break
+
+        return best_route, audit_entries
 
     def _score_route(self, route: ParserRoute, signals: DocumentSignals) -> int:
         """Score how well a route matches the given signals.
@@ -232,11 +287,18 @@ class ParserRouter:
 
         return soft_score
 
-    def _build_decision(self, route: ParserRoute, signals: DocumentSignals) -> RouteDecision:
-        """Build a RouteDecision from a matched route and signals.
+    def _build_decision(
+        self,
+        route: ParserRoute,
+        signals: DocumentSignals,
+        audit_entries: list[RouteAuditEntry],
+    ) -> RouteDecision:
+        """Build a RouteDecision from a matched route, signals, and audit trail.
 
         All key signals are always recorded in ``matched_signals`` so that
         route logs are fully explainable without needing to look elsewhere.
+        The per-route audit trail records scores and rejection reasons for
+        every candidate route.
         """
         matched: dict[str, Any] = {
             # Core signals — always present
@@ -263,6 +325,7 @@ class ParserRouter:
             review_policy=route.review_policy,
             matched_signals=matched,
             decision_reason=reason,
+            route_scores=audit_entries,
             config_version=self._config.schema_version,
         )
 
