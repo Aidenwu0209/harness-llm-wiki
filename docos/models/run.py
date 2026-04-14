@@ -120,6 +120,8 @@ class RunManifest(BaseModel):
     lint_summary: dict[str, int] = Field(default_factory=dict, description="Lint findings count by severity")
     harness_summary: dict[str, object] = Field(default_factory=dict, description="Harness evaluation summary")
     gate_decision: str | None = Field(default=None, description="Gate pass/block decision")
+    gate_blockers: list[str] = Field(default_factory=list, description="Reasons the gate blocked auto-merge")
+    release_reasoning: list[str] = Field(default_factory=list, description="Reasoning for the release decision")
     review_status: str | None = Field(default=None, description="Current review status (pending/approved/rejected/none)")
 
     def mark_stage(self, name: str, status: StageStatus, error_detail: str | None = None) -> None:

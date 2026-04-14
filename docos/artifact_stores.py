@@ -171,6 +171,8 @@ def _report_to_dict(report: HarnessReport) -> dict[str, Any]:
         "maintenance_quality": _section_to_dict(report.maintenance_quality),
         "overall_passed": report.overall_passed,
         "release_decision": report.release_decision,
+        "release_reasoning": report.release_reasoning,
+        "gate_blockers": report.gate_blockers,
     }
 
 
@@ -195,6 +197,8 @@ def _dict_to_report(data: dict[str, Any]) -> HarnessReport:
     report.maintenance_quality = _dict_to_section(data["maintenance_quality"])
     report.overall_passed = data["overall_passed"]
     report.release_decision = data["release_decision"]
+    report.release_reasoning = data.get("release_reasoning", [])
+    report.gate_blockers = data.get("gate_blockers", [])
     return report
 
 

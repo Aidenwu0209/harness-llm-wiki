@@ -42,6 +42,8 @@ class HarnessReport:
     # Overall
     overall_passed: bool = True
     release_decision: str = "pending"  # pending | auto_merge | review_required | blocked
+    release_reasoning: list[str] = field(default_factory=list)
+    gate_blockers: list[str] = field(default_factory=list)
 
     def compute_overall(self) -> None:
         self.overall_passed = (
@@ -51,8 +53,17 @@ class HarnessReport:
         )
         if self.overall_passed:
             self.release_decision = "auto_merge"
+            self.release_reasoning = ["All quality sections passed"]
         else:
             self.release_decision = "review_required"
+            reasons: list[str] = []
+            if not self.parse_quality.passed:
+                reasons.append(f"Parse quality failed: {'; '.join(self.parse_quality.notes)}")
+            if not self.knowledge_quality.passed:
+                reasons.append(f"Knowledge quality failed: {'; '.join(self.knowledge_quality.notes)}")
+            if not self.maintenance_quality.passed:
+                reasons.append(f"Maintenance quality failed: {'; '.join(self.maintenance_quality.notes)}")
+            self.release_reasoning = reasons
 
 
 # ---------------------------------------------------------------------------

@@ -635,6 +635,19 @@ class PipelineRunner:
 
             # Record gate observability (US-034)
             manifest.gate_decision = "passed" if can_merge else "blocked"
+            manifest.gate_blockers = reasons if not can_merge else []
+            manifest.release_reasoning = reasons if reasons else ["All gates passed"]
+
+            # Update review_status based on gate result
+            if can_merge:
+                manifest.review_status = "none"
+            else:
+                manifest.review_status = "pending"
+
+            # Persist gate decision as structured artifact
+            gate_artifact_path = self._persist_gate_decision(
+                manifest.run_id, can_merge, reasons, harness_report,
+            )
 
             manifest.mark_stage("gate", StageStatus.COMPLETED)
             self._run_store.update(manifest)
@@ -703,6 +716,34 @@ class PipelineRunner:
         ]
         path.write_text(
             json.dumps(findings_data, indent=2, default=str),
+            encoding="utf-8",
+        )
+        return path
+
+    def _persist_gate_decision(
+        self,
+        run_id: str,
+        can_merge: bool,
+        reasons: list[str],
+        harness_report: Any,
+    ) -> Path:
+        """Persist gate decision as a structured JSON artifact."""
+        gate_dir = self._base / "gate_decisions"
+        gate_dir.mkdir(parents=True, exist_ok=True)
+        path = gate_dir / f"{run_id}.json"
+
+        gate_data: dict[str, Any] = {
+            "run_id": run_id,
+            "release_decision": "auto_merge" if can_merge else "blocked",
+            "can_merge": can_merge,
+            "gate_blockers": reasons if not can_merge else [],
+            "release_reasoning": reasons if reasons else ["All gates passed"],
+            "harness_passed": harness_report.overall_passed if harness_report else None,
+            "harness_release_decision": harness_report.release_decision if harness_report else None,
+            "harness_release_reasoning": harness_report.release_reasoning if harness_report else [],
+        }
+        path.write_text(
+            json.dumps(gate_data, indent=2, default=str),
             encoding="utf-8",
         )
         return path
