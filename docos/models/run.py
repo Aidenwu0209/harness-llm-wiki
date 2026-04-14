@@ -65,6 +65,8 @@ class PipelineStage(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_detail: str | None = None
+    duration_seconds: float | None = Field(default=None, description="Stage duration in seconds")
+    warnings: list[str] = Field(default_factory=list, description="Warnings recorded during this stage")
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +113,15 @@ class RunManifest(BaseModel):
     started_at: datetime | None = Field(default=None, description="When the pipeline run started")
     finished_at: datetime | None = Field(default=None, description="When the pipeline run finished")
 
+    # Observability fields (US-034)
+    selected_route: str | None = Field(default=None, description="Route selected by the router")
+    parser_chain: list[str] = Field(default_factory=list, description="Ordered list of parsers attempted")
+    fallback_used: bool = Field(default=False, description="Whether a fallback parser was used")
+    lint_summary: dict[str, int] = Field(default_factory=dict, description="Lint findings count by severity")
+    harness_summary: dict[str, object] = Field(default_factory=dict, description="Harness evaluation summary")
+    gate_decision: str | None = Field(default=None, description="Gate pass/block decision")
+    review_status: str | None = Field(default=None, description="Current review status (pending/approved/rejected/none)")
+
     def mark_stage(self, name: str, status: StageStatus, error_detail: str | None = None) -> None:
         """Update a stage's status by name."""
         for stage in self.stages:
@@ -120,8 +131,22 @@ class RunManifest(BaseModel):
                     stage.started_at = datetime.now()
                 if status in (StageStatus.COMPLETED, StageStatus.FAILED):
                     stage.completed_at = datetime.now()
+                    if stage.started_at is not None:
+                        delta = stage.completed_at - stage.started_at
+                        stage.duration_seconds = delta.total_seconds()
                 if error_detail is not None:
                     stage.error_detail = error_detail
+                self.updated_at = datetime.now()
+                return
+
+        msg = f"Unknown stage: {name}"
+        raise ValueError(msg)
+
+    def add_stage_warning(self, name: str, warning: str) -> None:
+        """Append a warning to the specified stage."""
+        for stage in self.stages:
+            if stage.name == name:
+                stage.warnings.append(warning)
                 self.updated_at = datetime.now()
                 return
 

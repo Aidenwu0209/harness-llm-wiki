@@ -275,6 +275,10 @@ class PipelineRunner:
             route_artifact_path = self._persist_route_decision(manifest.run_id, decision)
             manifest.route_artifact_path = str(route_artifact_path)
 
+            # Record route observability (US-034)
+            manifest.selected_route = decision.selected_route
+            manifest.parser_chain = [decision.primary_parser] + list(decision.fallback_parsers)
+
             manifest.mark_stage("route", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return decision
@@ -328,6 +332,9 @@ class PipelineRunner:
             manifest.ir_artifact_path = str(ir_path)
             if parse_result.debug_assets_dir:
                 manifest.debug_artifact_path = parse_result.debug_assets_dir
+
+            # Record parse observability (US-034)
+            manifest.fallback_used = parse_result.fallback_used
             manifest.mark_stage("parse", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return docir
@@ -541,6 +548,13 @@ class PipelineRunner:
             lint_artifact_path = self._persist_lint_findings(manifest.run_id, findings)
             manifest.lint_artifact_path = str(lint_artifact_path)
 
+            # Record lint observability (US-034)
+            severity_counts: dict[str, int] = {}
+            for f in findings:
+                sev = f.severity.value
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+            manifest.lint_summary = severity_counts
+
             manifest.mark_stage("lint", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return findings
@@ -582,6 +596,12 @@ class PipelineRunner:
             self._report_store.save(report)
             manifest.report_artifact_path = str(self._base / "reports" / manifest.run_id)
 
+            # Record harness observability (US-034)
+            manifest.harness_summary = {
+                "overall_passed": report.overall_passed,
+                "release_decision": report.release_decision,
+            }
+
             manifest.mark_stage("harness", StageStatus.COMPLETED)
             self._run_store.update(manifest)
             return report
@@ -612,6 +632,9 @@ class PipelineRunner:
                 findings=findings,
                 harness_passed=harness_passed,
             )
+
+            # Record gate observability (US-034)
+            manifest.gate_decision = "passed" if can_merge else "blocked"
 
             manifest.mark_stage("gate", StageStatus.COMPLETED)
             self._run_store.update(manifest)

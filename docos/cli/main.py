@@ -417,9 +417,15 @@ def report(run_id: str) -> None:
         "finished_at": manifest.finished_at.isoformat() if manifest.finished_at else None,
     }
 
-    # Stages summary with error detail
+    # Stages summary with duration, warnings, and error detail
     stages = [
-        {"name": s.name, "status": s.status.value, "error": s.error_detail}
+        {
+            "name": s.name,
+            "status": s.status.value,
+            "error": s.error_detail,
+            "duration_seconds": s.duration_seconds,
+            "warnings": s.warnings,
+        }
         for s in manifest.stages
     ]
     result["stages"] = stages
@@ -430,21 +436,43 @@ def report(run_id: str) -> None:
         result["failed_stage"] = failed[0].name
         result["error_detail"] = failed[0].error_detail
 
-    # Route decision
+    # Route decision — load persisted artifact for full route data
+    route_data: dict[str, object] | None = None
     if manifest.route_artifact_path and Path(manifest.route_artifact_path).exists():
         route_data = json.loads(Path(manifest.route_artifact_path).read_text())
+
+    if route_data is not None:
         result["route"] = route_data
     else:
         result["route"] = "not-generated-yet"
 
-    # Parser info (from route decision)
-    if isinstance(result.get("route"), dict):
-        route_info = result["route"]
-        assert isinstance(route_info, dict)
+    # Selected route — from manifest observability field or artifact
+    if manifest.selected_route:
+        result["selected_route"] = manifest.selected_route
+    elif route_data is not None:
+        result["selected_route"] = route_data.get("selected_route", "not-generated-yet")
+
+    # Parser chain — keep dict format for backward compat, add list from manifest
+    if isinstance(route_data, dict):
         result["parser_chain"] = {
-            "primary": route_info.get("primary_parser"),
-            "fallbacks": route_info.get("fallback_parsers"),
+            "primary": route_data.get("primary_parser"),
+            "fallbacks": route_data.get("fallback_parsers"),
         }
+    else:
+        result["parser_chain"] = {}
+
+    # Also store the ordered parser list from manifest (US-034)
+    if manifest.parser_chain:
+        result["parser_chain_list"] = manifest.parser_chain
+        # Backfill parser_chain dict if empty
+        if not result["parser_chain"] and manifest.parser_chain:
+            result["parser_chain"] = {
+                "primary": manifest.parser_chain[0] if manifest.parser_chain else None,
+                "fallbacks": manifest.parser_chain[1:] if len(manifest.parser_chain) > 1 else [],
+            }
+
+    # Fallback used flag (US-034)
+    result["fallback_used"] = manifest.fallback_used
 
     # IR artifact
     ir_store = IRStore(base / "ir")
@@ -465,30 +493,49 @@ def report(run_id: str) -> None:
     # Patch artifact
     result["patch_artifact"] = str(manifest.patch_artifact_path) if manifest.patch_artifact_path else "not-generated-yet"
 
-    # Lint findings
+    # Lint findings — prefer manifest summary, always include artifact path
     if manifest.lint_artifact_path and Path(manifest.lint_artifact_path).exists():
         lint_data = json.loads(Path(manifest.lint_artifact_path).read_text())
         result["lint_findings"] = len(lint_data)
         result["lint_artifact"] = manifest.lint_artifact_path
+    elif manifest.lint_summary:
+        result["lint_findings"] = sum(manifest.lint_summary.values())
     else:
         result["lint_findings"] = "not-generated-yet"
 
-    # Harness report
+    if manifest.lint_summary:
+        result["lint_summary"] = manifest.lint_summary
+
+    if manifest.lint_artifact_path:
+        result["lint_artifact"] = manifest.lint_artifact_path
+
+    # Harness report — load from store for full data, use manifest summary for US-034
     rs = ReportStore(base / "reports")
     harness_report = rs.get(run_id)
+
+    # Backward compat: harness_status and harness_passed
     result["harness_status"] = harness_report.release_decision if harness_report else "not-generated-yet"
     result["harness_passed"] = harness_report.overall_passed if harness_report else None
 
-    # Gate decision — derived from lint + harness
-    if manifest.report_artifact_path:
+    # US-034: harness_summary from manifest (may not be populated for old runs)
+    if manifest.harness_summary:
+        result["harness_summary"] = manifest.harness_summary
+
+    # Gate decision — prefer manifest field
+    if manifest.gate_decision:
+        result["gate_decision"] = manifest.gate_decision
+    elif manifest.report_artifact_path:
         result["gate_decision"] = "passed" if result.get("harness_passed") else "blocked"
 
-    # Review status
-    from docos.review.queue import ReviewQueue
-    rq = ReviewQueue(base / "review")
-    pending = rq.list_pending()
-    run_reviews = [r for r in pending if run_id in r.target_object_id or run_id in r.source_id]
-    result["review_status"] = "pending" if run_reviews else "none"
+    # Review status — prefer manifest field, fall back to query
+    if manifest.review_status:
+        result["review_status"] = manifest.review_status
+    else:
+        from docos.review.queue import ReviewQueue
+        rq = ReviewQueue(base / "review")
+        pending = rq.list_pending()
+        run_reviews = [r for r in pending if run_id in r.target_object_id or run_id in r.source_id]
+        result["review_status"] = "pending" if run_reviews else "none"
 
     # Debug assets
     if manifest.debug_artifact_path:
