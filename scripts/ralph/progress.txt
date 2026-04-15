@@ -25,3 +25,14 @@
   - ReviewQueue._load_all() already handles corrupted files — adding new fields doesn't break the load path
 ---
 
+## 2026-04-15 13:22 - US-003
+- Implemented real auto-merge path in _stage_review using PatchService.auto_merge
+- Added condition: auto-merge only when gate_passed AND no patch requires review
+- Review artifact now includes release_decision and patch_ids fields
+- PipelineResult.review_status is set in addition to manifest.review_status
+- Changed files: docos/pipeline/runner.py, tests/test_review_auto_merge_us003.py
+- **Future iteration learnings:**
+  - Patch.auto_merge() requires merge_status==PENDING and review_required==False — must check both conditions
+  - PatchService must be instantiated with correct patch_dir and wiki_dir matching PipelineRunner stores
+---
+

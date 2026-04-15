@@ -108,6 +108,7 @@ class RunManifest(BaseModel):
     lint_artifact_path: str | None = Field(default=None, description="Path to persisted lint findings artifact")
     debug_artifact_path: str | None = Field(default=None, description="Path to debug assets directory")
     review_artifact_path: str | None = Field(default=None, description="Path to persisted review artifact")
+    review_ids: list[str] = Field(default_factory=list, description="IDs of review items created for this run")
 
     # Temporal
     created_at: datetime = Field(default_factory=datetime.now)
