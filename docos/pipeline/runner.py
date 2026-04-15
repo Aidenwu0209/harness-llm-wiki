@@ -71,6 +71,7 @@ class PipelineResult:
     harness_passed: bool | None = None
     gate_passed: bool | None = None
     gate_reasons: list[str] = field(default_factory=list)
+    review_status: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +197,11 @@ class PipelineRunner:
             )
             result.gate_passed = gate_passed
             result.gate_reasons = gate_reasons
+
+            # -- Stage 11: Review --
+            self._stage_review(
+                manifest, gate_passed, gate_reasons, patches, result,
+            )
 
             # -- Finalize --
             result.status = RunStatus.COMPLETED
@@ -659,6 +665,65 @@ class PipelineRunner:
             manifest.mark_stage("gate", StageStatus.FAILED, error_detail=str(e))
             self._run_store.update(manifest)
             return False, [str(e)]
+
+    # ------------------------------------------------------------------
+    # Stage 11: Review
+    # ------------------------------------------------------------------
+
+    def _stage_review(
+        self,
+        manifest: RunManifest,
+        gate_passed: bool,
+        gate_reasons: list[str],
+        patches: list[Any],
+        result: PipelineResult,
+    ) -> None:
+        """Stage 11: Review stage — records review status based on gate outcome.
+
+        For auto-merge eligible runs, records an auto-merge review outcome.
+        For blocked runs, records a pending-review status.
+        """
+        try:
+            manifest.mark_stage("review", StageStatus.RUNNING)
+            self._run_store.update(manifest)
+
+            if gate_passed:
+                # Auto-merge path: all patches can be auto-merged
+                manifest.review_status = "auto_merged"
+                manifest.release_reasoning = gate_reasons if gate_reasons else ["All gates passed — auto-merged"]
+            else:
+                # Pending review path: gate blocked auto-merge
+                manifest.review_status = "pending"
+                manifest.release_reasoning = gate_reasons
+
+            # Persist review artifact
+            review_dir = self._base / "review"
+            review_dir.mkdir(parents=True, exist_ok=True)
+            review_artifact = review_dir / f"{manifest.run_id}.json"
+            review_data = {
+                "run_id": manifest.run_id,
+                "source_id": manifest.source_id,
+                "review_status": manifest.review_status,
+                "gate_passed": gate_passed,
+                "gate_reasons": gate_reasons,
+                "patch_count": len(patches),
+                "release_reasoning": manifest.release_reasoning,
+            }
+            review_artifact.write_text(
+                json.dumps(review_data, indent=2, default=str),
+                encoding="utf-8",
+            )
+            manifest.review_artifact_path = str(review_artifact)
+
+            manifest.mark_stage("review", StageStatus.COMPLETED)
+            self._run_store.update(manifest)
+
+        except Exception as e:
+            result.status = RunStatus.FAILED
+            result.failed_stage = "review"
+            result.error_detail = str(e)
+            manifest.mark_stage("review", StageStatus.FAILED, error_detail=str(e))
+            self._run_store.update(manifest)
 
     # ------------------------------------------------------------------
     # Helpers

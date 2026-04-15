@@ -54,6 +54,7 @@ PIPELINE_STAGES: list[str] = [
     "lint",
     "harness",
     "gate",
+    "review",
 ]
 
 
@@ -106,6 +107,7 @@ class RunManifest(BaseModel):
     route_artifact_path: str | None = Field(default=None, description="Path to persisted route decision artifact")
     lint_artifact_path: str | None = Field(default=None, description="Path to persisted lint findings artifact")
     debug_artifact_path: str | None = Field(default=None, description="Path to debug assets directory")
+    review_artifact_path: str | None = Field(default=None, description="Path to persisted review artifact")
 
     # Temporal
     created_at: datetime = Field(default_factory=datetime.now)
