@@ -646,13 +646,12 @@ class PipelineRunner:
                         pass
 
             linter = WikiLinter()
-            patch = patches[0] if patches else None
             findings = linter.lint(
                 pages=pages,
                 claims=claims,
                 entities=entities,
                 docir=docir,
-                patch=patch,
+                patches=patches,
                 page_bodies=page_bodies,
             )
 

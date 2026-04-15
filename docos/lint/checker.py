@@ -65,13 +65,19 @@ class WikiLinter:
         docir: DocIR | None = None,
         patch: Patch | None = None,
         page_bodies: dict[str, str] | None = None,
+        patches: list[Patch] | None = None,
     ) -> list[LintFinding]:
         findings: list[LintFinding] = []
         findings.extend(self._lint_structure(pages))
         findings.extend(self._lint_knowledge(claims, entities))
-        findings.extend(self._lint_operational(pages, patch))
+        # Use patches list if available, fall back to single patch for backward compat
+        effective_patches = patches if patches is not None else ([patch] if patch is not None else [])
+        findings.extend(self._lint_operational(pages, effective_patches))
         if page_bodies:
             findings.extend(self._lint_body(pages, page_bodies, claims, docir))
+        # Patch-set aware checks (US-015)
+        if effective_patches:
+            findings.extend(self._lint_patch_set(effective_patches))
         return findings
 
     # ------------------------------------------------------------------
@@ -227,11 +233,14 @@ class WikiLinter:
     # ------------------------------------------------------------------
 
     def _lint_operational(
-        self, pages: list[Frontmatter], patch: Patch | None
+        self, pages: list[Frontmatter], patches: list[Patch] | Patch
     ) -> list[LintFinding]:
         findings: list[LintFinding] = []
 
-        if patch is not None:
+        if isinstance(patches, Patch):
+            patches = [patches]
+
+        for patch in patches:
             # Patch missing risk score
             if patch.risk_score == 0.0 and patch.changes:
                 findings.append(LintFinding(
@@ -246,6 +255,52 @@ class WikiLinter:
                     code="HIGH_BLAST_NO_REVIEW",
                     message=f"Patch {patch.patch_id} has blast_radius.pages={patch.blast_radius.pages} but review_required=False",
                     severity=LintSeverity.P1,
+                ))
+
+        return findings
+
+    # ------------------------------------------------------------------
+    # Patch-set aware lint (US-015)
+    # ------------------------------------------------------------------
+
+    def _lint_patch_set(self, patches: list[Patch]) -> list[LintFinding]:
+        """Lint checks that inspect the full patch collection."""
+        findings: list[LintFinding] = []
+
+        # Detect path conflicts: multiple patches targeting the same page
+        from docos.models.patch import ChangeType
+
+        target_map: dict[str, list[str]] = {}
+        for p in patches:
+            for c in p.changes:
+                target_map.setdefault(c.target, []).append(p.patch_id)
+
+        for target, patch_ids in target_map.items():
+            if len(patch_ids) > 1:
+                findings.append(LintFinding(
+                    code="PATCH_PATH_CONFLICT",
+                    message=f"Multiple patches target {target}: {patch_ids}",
+                    severity=LintSeverity.P1,
+                ))
+
+        # Detect conflicting create + delete for the same target
+        target_ops: dict[str, set[ChangeType]] = {}
+        for p in patches:
+            for c in p.changes:
+                target_ops.setdefault(c.target, set()).add(c.type)
+
+        for target, ops in target_ops.items():
+            if ChangeType.CREATE_PAGE in ops and ChangeType.DELETE_PAGE in ops:
+                findings.append(LintFinding(
+                    code="CONFLICTING_CREATE_DELETE",
+                    message=f"Target {target} has both CREATE and DELETE patches",
+                    severity=LintSeverity.P0,
+                ))
+            if ChangeType.UPDATE_PAGE in ops and ChangeType.DELETE_PAGE in ops:
+                findings.append(LintFinding(
+                    code="CONFLICTING_UPDATE_DELETE",
+                    message=f"Target {target} has both UPDATE and DELETE patches",
+                    severity=LintSeverity.P0,
                 ))
 
         return findings
