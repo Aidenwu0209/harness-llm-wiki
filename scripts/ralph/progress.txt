@@ -82,3 +82,12 @@
   - ClaimRecord.object is aliased as "object" but accessed as object_value
 ---
 
+## 2026-04-15 13:22 - US-009
+- Entity pages already compiled in unified page loop from US-008
+- Tests verify deterministic paths, frontmatter fields (id, type, source_docs, related_claims, updated_at)
+- Rerunning same fixture preserves entity page paths
+- Changed files: tests/test_compile_entity_us009.py
+- **Future iteration learnings:**
+  - ClaimRecord with SUPPORTED status requires at least one EvidenceAnchor with anchor_id, source_id, doc_id, page_no, block_id
+---
+
