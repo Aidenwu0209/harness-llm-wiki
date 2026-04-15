@@ -119,6 +119,27 @@ class RunStore:
                 return manifest
         return None
 
+    def find_latest_run(self, source_id: str) -> str | None:
+        """Find the most recent run_id for a given source_id.
+
+        Scans all manifests, filters by source_id, and returns the run_id
+        of the manifest with the latest ``started_at`` timestamp.
+
+        Returns:
+            The latest run_id, or ``None`` if no runs match.
+        """
+        candidates = [
+            m for m in self.list_runs() if m.source_id == source_id
+        ]
+        if not candidates:
+            return None
+        # Sort by started_at descending; fall back to created_at
+        candidates.sort(
+            key=lambda m: m.started_at or datetime.min,
+            reverse=True,
+        )
+        return candidates[0].run_id
+
     def update(self, manifest: RunManifest) -> None:
         """Persist an updated manifest."""
         self._persist(manifest)

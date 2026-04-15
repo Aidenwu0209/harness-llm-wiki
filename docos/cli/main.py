@@ -276,22 +276,35 @@ def parse(source_id: str, run_id: str | None) -> None:
 
 @cli.command()
 @click.argument("source_id")
-def normalize(source_id: str) -> None:
+@click.option("--run-id", default=None, help="Run ID to use for artifact lookup")
+def normalize(source_id: str, run_id: str | None) -> None:
     """Normalize parsed output into canonical DocIR."""
     from docos.ir_store import IRStore
-    from docos.pipeline.normalizer import PageLocalNormalizer
-    from docos.registry import SourceRegistry
-    from docos.source_store import RawStorage
+    from docos.pipeline.normalizer import GlobalRepair, RepairLog
+    from docos.run_store import RunStore
 
     base = Path(".")
-    raw = RawStorage(base / "raw")
-    registry = SourceRegistry(base / "registry", raw)
-    source = registry.get(source_id)
-    if source is None:
-        click.echo(json.dumps({"error": f"Source not found: {source_id}"}))
+    ir_store = IRStore(base / "ir")
+
+    # Resolve run_id
+    if run_id is None:
+        # Find latest run for this source
+        run_store = RunStore(base)
+        run_id = run_store.find_latest_run(source_id)
+        if run_id is None:
+            click.echo(json.dumps({"error": f"No run found for source: {source_id}"}))
+            raise SystemExit(1)
+
+    docir = ir_store.get(run_id)
+    if docir is None:
+        click.echo(json.dumps({"error": f"No parse artifact found for run: {run_id}"}))
         raise SystemExit(1)
 
-    click.echo(json.dumps({"status": "normalized", "source_id": source_id}))
+    repair_log = RepairLog(source_id=source_id, run_id=run_id)
+    repaired = GlobalRepair().repair(docir, repair_log)
+    ir_store.save(repaired, run_id)
+
+    click.echo(json.dumps({"status": "normalized", "source_id": source_id, "run_id": run_id}))
 
 
 @cli.command()
