@@ -202,6 +202,15 @@ class ReviewQueue:
                     patch_store.save(patch)
                     sync_report["patches_updated"].append(pid)
 
+        elif action == "reject" and patch_dir is not None:
+            patch_store = PatchStore(patch_dir)
+            for pid in item.patch_ids:
+                patch = patch_store.get(pid)
+                if patch is not None:
+                    patch.reject(reviewer=reviewer, reason=reason)
+                    patch_store.save(patch)
+                    sync_report["patches_updated"].append(pid)
+
         # Update manifest if run_id is available
         if item.run_id and run_dir is not None:
             run_store = RunStore(run_dir)

@@ -48,3 +48,13 @@
   - Using PipelineRunner.__new__() allows testing single stage methods without full pipeline init
 ---
 
+## 2026-04-15 13:22 - US-005
+- Added resolve_and_sync method to ReviewQueue for approve/reject/request_changes with patch + manifest sync
+- Approval transitions linked patches to APPROVED merge status and updates manifest review_status
+- Resolution artifact persisted to review/resolutions/<review_id>.json
+- Changed files: docos/review/queue.py, tests/test_review_sync_us005.py
+- **Future iteration learnings:**
+  - resolve_and_sync accepts optional patch_dir and run_dir — enables testability without coupling stores
+  - Resolution artifact contains full audit trail: reviewer, reason, patches_updated, manifest_updated
+---
+
