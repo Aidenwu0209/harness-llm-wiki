@@ -194,6 +194,7 @@ class PipelineRunner:
             # -- Stage 10: Gate --
             gate_passed, gate_reasons = self._stage_gate(
                 manifest, config, findings, harness_report, result,
+                patches=patches,
             )
             result.gate_passed = gate_passed
             result.gate_reasons = gate_reasons
@@ -730,6 +731,7 @@ class PipelineRunner:
         findings: list[Any],
         harness_report: Any,
         result: PipelineResult,
+        patches: list[Any] | None = None,
     ) -> tuple[bool, list[str]]:
         """Stage 10: Release gate decision."""
         try:
@@ -738,9 +740,22 @@ class PipelineRunner:
 
             gate = ReleaseGate(config=config)
             harness_passed = harness_report.overall_passed if harness_report else None
+
+            # Patch-set aware gate metrics (US-017)
+            patch_count = len(patches) if patches else 0
+            total_pages_changed = len({c.target for p in (patches or []) for c in p.changes}) if patches else 0
+            aggregate_risk = max((p.risk_score for p in (patches or [])), default=0.0)
+            delete_markers = sum(1 for p in (patches or []) for c in p.changes if c.type == ChangeType.DELETE_PAGE)
+            review_markers = sum(1 for p in (patches or []) if getattr(p, "review_required", False))
+
             can_merge, reasons = gate.check(
                 findings=findings,
                 harness_passed=harness_passed,
+                patch_count=patch_count,
+                total_pages_changed=total_pages_changed,
+                aggregate_risk=aggregate_risk,
+                delete_page_markers=delete_markers,
+                review_required_markers=review_markers,
             )
 
             # Record gate observability (US-034)

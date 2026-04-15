@@ -339,11 +339,16 @@ class ReleaseGate:
         regression_ok: bool | None = None,
         unsupported_claim_increase: bool = False,
         fallback_low_confidence: bool = False,
+        patch_count: int = 0,
+        total_pages_changed: int = 0,
+        aggregate_risk: float = 0.0,
+        delete_page_markers: int = 0,
+        review_required_markers: int = 0,
     ) -> tuple[bool, list[str]]:
         """Check if auto-merge is allowed.
 
         Reads blocking conditions from config if available, otherwise
-        uses sensible defaults.
+        uses sensible defaults. Patch-set metrics inform the decision.
 
         Returns:
             (can_merge, list of blocking reasons)
@@ -388,6 +393,10 @@ class ReleaseGate:
         # Fallback with low confidence
         if fallback_low_confidence:
             reasons.append("Fallback output below confidence policy")
+
+        # Patch-set aware checks (US-017)
+        if review_required_markers > 0:
+            reasons.append(f"{review_required_markers} patches require review")
 
         can_merge = len(reasons) == 0
         return can_merge, reasons

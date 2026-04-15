@@ -543,6 +543,21 @@ def report(run_id: str) -> None:
     # Patch artifact
     result["patch_artifact"] = str(manifest.patch_artifact_path) if manifest.patch_artifact_path else "not-generated-yet"
 
+    # Patch-set summary (US-017)
+    patch_dir = base / "patches"
+    patchset_path = patch_dir / f"patchset-{run_id}.json"
+    if patchset_path.exists():
+        ps_data = json.loads(patchset_path.read_text())
+        summary = ps_data.get("summary", {})
+        result["patch_set"] = {
+            "total_patches": summary.get("total_patches", 0),
+            "total_pages_changed": summary.get("total_pages_changed", 0),
+            "create_page_count": summary.get("create_page_count", 0),
+            "update_page_count": summary.get("update_page_count", 0),
+            "delete_page_count": summary.get("delete_page_count", 0),
+            "max_risk_score": summary.get("max_risk_score", 0.0),
+        }
+
     # Compile summary (US-012)
     if manifest.compiled_page_count > 0:
         result["compile_summary"] = {
