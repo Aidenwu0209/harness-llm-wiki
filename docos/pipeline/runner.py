@@ -703,24 +703,30 @@ class PipelineRunner:
                 manifest.release_reasoning = gate_reasons if gate_reasons else ["All gates passed — auto-merged"]
                 result.review_status = "auto_merged"
             else:
-                # Pending review path: create a run-level pending review item
+                # Pending review path: create a run-level pending review item (idempotent)
                 from docos.review.queue import ReviewItem, ReviewItemType, ReviewQueue
 
                 queue = ReviewQueue(self._base / "review_queue")
-                review_id = f"rv-{manifest.run_id}"
-                review_item = ReviewItem(
-                    review_id=review_id,
-                    item_type=ReviewItemType.PATCH,
-                    target_object_id=manifest.run_id,
-                    run_id=manifest.run_id,
-                    source_id=manifest.source_id,
-                    patch_ids=[p.patch_id for p in patches],
-                    gate_reasons=gate_reasons,
-                    lint_summary=manifest.lint_summary,
-                    harness_summary=manifest.harness_summary,
-                    reason="; ".join(gate_reasons) if gate_reasons else "Gate blocked auto-merge",
-                )
-                queue.add(review_item)
+
+                # Idempotency check: reuse existing review item for this run
+                existing_item = queue.find_by_run_id(manifest.run_id)
+                if existing_item is not None:
+                    review_id = existing_item.review_id
+                else:
+                    review_id = f"rv-{manifest.run_id}"
+                    review_item = ReviewItem(
+                        review_id=review_id,
+                        item_type=ReviewItemType.PATCH,
+                        target_object_id=manifest.run_id,
+                        run_id=manifest.run_id,
+                        source_id=manifest.source_id,
+                        patch_ids=[p.patch_id for p in patches],
+                        gate_reasons=gate_reasons,
+                        lint_summary=manifest.lint_summary,
+                        harness_summary=manifest.harness_summary,
+                        reason="; ".join(gate_reasons) if gate_reasons else "Gate blocked auto-merge",
+                    )
+                    queue.add(review_item)
 
                 manifest.review_status = "pending"
                 manifest.review_ids = [review_id]

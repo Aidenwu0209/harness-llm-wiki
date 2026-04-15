@@ -58,3 +58,10 @@
   - Resolution artifact contains full audit trail: reviewer, reason, patches_updated, manifest_updated
 ---
 
+## 2026-04-15 13:22 - US-006
+- Extended resolve_and_sync with reject path: patches → REJECTED, manifest → rejected
+- request_changes path: manifest → changes_requested, patches stay PENDING
+- Both paths write resolution artifacts with full audit trail
+- Changed files: docos/review/queue.py, tests/test_review_reject_us006.py
+---
+

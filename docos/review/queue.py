@@ -143,6 +143,13 @@ class ReviewQueue:
     def list_all(self) -> list[ReviewItem]:
         return list(self._items.values())
 
+    def find_by_run_id(self, run_id: str) -> ReviewItem | None:
+        """Find an existing review item by run_id."""
+        for item in self._items.values():
+            if item.run_id == run_id:
+                return item
+        return None
+
     def resolve(self, review_id: str, action: str, reviewer: str, reason: str = "") -> ReviewItem | None:
         """Resolve a review item.
 
