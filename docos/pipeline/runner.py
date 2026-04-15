@@ -110,11 +110,30 @@ class PipelineRunner:
         # Parser registry — register available parsers
         self._parser_registry = ParserRegistry()
         self._parser_registry.register(StdlibPDFParser())
-        self._parser_registry.register(BasicTextFallbackParser())
+        fallback_parser = BasicTextFallbackParser()
+        self._parser_registry.register(fallback_parser)
+        # Register alias for backward compat (old configs use "basic_text")
+        self._parser_registry._backends["basic_text"] = fallback_parser
 
     @property
     def source_registry(self) -> SourceRegistry:
         return self._registry
+
+    def validate_config(self) -> list[str]:
+        """Validate that all parser names in config routes exist in the registry.
+
+        Returns a list of unresolved parser names. Empty list means all OK.
+        """
+        config = self._load_config()
+        registered = set(self._parser_registry.list_parsers())
+        unresolved: set[str] = set()
+        for route in config.router.routes:
+            if route.primary_parser not in registered:
+                unresolved.add(route.primary_parser)
+            for fb in route.fallback_parsers:
+                if fb not in registered:
+                    unresolved.add(fb)
+        return sorted(unresolved)
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -136,6 +155,15 @@ class PipelineRunner:
         try:
             # -- Load config --
             config = self._load_config()
+
+            # -- Validate parser config (fail fast) --
+            if config.router.routes:
+                unresolved = self.validate_config()
+                if unresolved:
+                    raise ValueError(
+                        f"Unresolved parsers in config: {', '.join(unresolved)}. "
+                        f"Available: {', '.join(self._parser_registry.list_parsers())}"
+                    )
 
             # -- Stage 1: Ingest --
             source, manifest = self._stage_ingest(file_path, origin, tags, result)

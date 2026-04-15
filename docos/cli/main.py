@@ -169,6 +169,9 @@ def route(source_id: str) -> None:
     """Route a source to the best parser."""
     import yaml  # type: ignore[import-untyped]
     from docos.models.config import AppConfig
+    from docos.pipeline.parser import ParserRegistry
+    from docos.pipeline.parsers.basic_text import BasicTextFallbackParser
+    from docos.pipeline.parsers.stdlib_pdf import StdlibPDFParser
     from docos.pipeline.router import ParserRouter
     from docos.pipeline.signal_extractor import SignalExtractor, signals_to_dict
     from docos.registry import SourceRegistry
@@ -186,6 +189,25 @@ def route(source_id: str) -> None:
     config_path = Path("configs/router.yaml")
     with open(config_path) as f:
         config = AppConfig.model_validate(yaml.safe_load(f))
+
+    # Validate parser config against registry
+    parser_registry = ParserRegistry()
+    parser_registry.register(StdlibPDFParser())
+    parser_registry.register(BasicTextFallbackParser())
+    registered = set(parser_registry.list_parsers())
+    unresolved: set[str] = set()
+    for route in config.router.routes:
+        if route.primary_parser not in registered:
+            unresolved.add(route.primary_parser)
+        for fb in route.fallback_parsers:
+            if fb not in registered:
+                unresolved.add(fb)
+    if unresolved:
+        click.echo(json.dumps({
+            "error": f"Unresolved parsers: {', '.join(sorted(unresolved))}",
+            "available": sorted(registered),
+        }))
+        raise SystemExit(1)
 
     # Extract signals from the real source file
     source_file_path = source.raw_storage_path or source.file_name
