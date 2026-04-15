@@ -123,6 +123,15 @@ class WikiStore(_JsonArtifactStore):
     def __init__(self, base_dir: Path) -> None:
         super().__init__(base_dir)
 
+    def list_page_paths(self) -> list[str]:
+        """List all stored wiki page paths."""
+        paths: list[str] = []
+        for json_file in self._base.glob("*.json"):
+            data = self._load_json(json_file.stem)
+            if data is not None and "page_path" in data:
+                paths.append(data["page_path"])
+        return paths
+
     def save(self, state: WikiPageState) -> Path:
         """Persist wiki page state. Key is page_path (sanitized)."""
         key = _sanitize_key(state.page_path)

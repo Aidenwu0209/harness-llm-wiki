@@ -26,7 +26,7 @@ from docos.lint.checker import ReleaseGate, WikiLinter
 from docos.models.config import AppConfig
 from docos.models.docir import DocIR
 from docos.models.knowledge import ClaimRecord, EntityRecord, KnowledgeRelation
-from docos.models.patch import Change, ChangeType, Patch
+from docos.models.patch import BlastRadius, Change, ChangeType, Patch
 from docos.models.run import RunManifest, RunStatus, StageStatus
 from docos.models.source import SourceRecord
 from docos.pipeline.normalizer import GlobalRepair, PageLocalNormalizer, RepairLog
@@ -524,6 +524,40 @@ class PipelineRunner:
                     frontmatter=cfm.model_dump(),
                     body=cbody,
                 ))
+
+            # 4. Generate delete patches for stale entity and concept pages
+            current_paths = {
+                str(page_path),  # source
+            }
+            for entity in entities:
+                efm2, _, epath2 = compiler.compile_entity_page(entity, [])
+                current_paths.add(str(epath2))
+            for concept_name in concept_names:
+                cfm2, _, cpath2 = compiler.compile_concept_page(
+                    concept_name=concept_name,
+                    source_ids=[],
+                    related_claims=[],
+                    related_entities=[],
+                )
+                current_paths.add(str(cpath2))
+
+            prior_paths = set(self._wiki_store.list_page_paths())
+            stale_entity_concept_paths = {
+                p for p in prior_paths - current_paths
+                if "/entities/" in p or "/concepts/" in p
+            }
+            for stale_path in stale_entity_concept_paths:
+                stale_slug = stale_path.replace("/", "-").replace(" ", "-")[:50]
+                del_patch = Patch(
+                    patch_id=f"del-{manifest.run_id}-{stale_slug}",
+                    run_id=manifest.run_id,
+                    source_id=source.source_id,
+                    changes=[Change(type=ChangeType.DELETE_PAGE, target=stale_path)],
+                    risk_score=0.3,
+                    blast_radius=BlastRadius(pages=1),
+                )
+                patches.append(del_patch)
+                page_types.append("delete")
 
             # Record compile summary in manifest
             manifest.compiled_page_count = len(page_types)

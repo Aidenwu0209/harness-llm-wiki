@@ -91,3 +91,9 @@
   - ClaimRecord with SUPPORTED status requires at least one EvidenceAnchor with anchor_id, source_id, doc_id, page_no, block_id
 ---
 
+## 2026-04-15 13:22 - US-010
+- Concept pages derived from concept-type entities (EntityType.CONCEPT/TOPIC/THEME) — deterministic, no LLM
+- Path and frontmatter ID are stable across reruns (slug-based)
+- Changed files: tests/test_compile_concept_us010.py
+---
+
