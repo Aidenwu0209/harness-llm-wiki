@@ -59,15 +59,15 @@ def _setup_config(tmp_path: Path) -> Path:
     return config_path
 
 
-# Config with unresolvable parser to force a parse-stage failure
+# Config with valid parser but we will feed a corrupted PDF to force parse-stage failure
 _BAD_PARSER_CONFIG_YAML = (
     "environment: local\nschema_version: '1'\n"
-    "router:\n  default_route: bad_route\n  routes:\n"
-    "    - name: bad_route\n"
-    "      description: 'Route with nonexistent parser'\n"
+    "router:\n  default_route: fallback_safe_route\n  routes:\n"
+    "    - name: fallback_safe_route\n"
+    "      description: 'Route with valid parser'\n"
     "      file_types: ['application/pdf']\n"
-    "      primary_parser: nonexistent_parser\n"
-    "      fallback_parsers: [also_nonexistent]\n"
+    "      primary_parser: stdlib_pdf\n"
+    "      fallback_parsers: []\n"
     "      expected_risks: []\n      post_parse_repairs: []\n"
     "      review_policy: default\n"
     "risk_thresholds:\n  high_risk_score: 0.7\n  medium_risk_score: 0.4\n"
@@ -89,12 +89,29 @@ _BAD_PARSER_CONFIG_YAML = (
 
 
 def _setup_config_with_bad_parser(tmp_path: Path) -> Path:
-    """Create a config that routes to nonexistent parsers, forcing a parse failure."""
+    """Create a config that uses valid parser names but we will feed a corrupted PDF."""
     config_dir = tmp_path / "configs"
     config_dir.mkdir()
     config_path = config_dir / "router.yaml"
     config_path.write_text(_BAD_PARSER_CONFIG_YAML)
     return config_path
+
+
+def _build_corrupted_pdf() -> bytes:
+    """Create a corrupted PDF (no %PDF header) so stdlib_pdf fails at parse."""
+    return (
+        b"CORRUPTED-HEADER\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]\n"
+        b"   /Contents 4 0 R >>\nendobj\n"
+        b"4 0 obj\n<< /Length 200 >>\nstream\n"
+        b"BT /F1 18 Tf 100 700 Td (Introduction to Document Processing) Tj ET\n"
+        b"BT /F1 12 Tf 100 670 Td (This document describes the DocOS pipeline.) Tj ET\n"
+        b"endstream\nendobj\n"
+        b"trailer\n<< /Size 5 /Root 1 0 R >>\n%%EOF"
+    )
 
 
 class TestRerunStability:
@@ -317,14 +334,14 @@ class TestRerunStability:
     def test_failure_path_debug_artifacts_preserved(self, tmp_path: Path) -> None:
         """Debug artifacts remain available after a real failure for comparing unexpected rerun drift.
 
-        Uses a config with an unresolvable parser (nonexistent_parser) to force
-        the parse stage to fail, then verifies that the manifest records the
+        Uses a valid config with stdlib_pdf but feeds a corrupted PDF (no %PDF header)
+        to force the parse stage to fail, then verifies that the manifest records the
         failed stage with error_detail and that debug artifacts are still
         persisted and available for comparison.
         """
         config_path = _setup_config_with_bad_parser(tmp_path)
         pdf_path = tmp_path / "simple_text.pdf"
-        pdf_path.write_bytes(_build_simple_pdf())
+        pdf_path.write_bytes(_build_corrupted_pdf())
 
         runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
         result = runner.run(file_path=pdf_path)

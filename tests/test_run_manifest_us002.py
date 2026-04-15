@@ -143,14 +143,16 @@ class TestRunManifestPersistence:
 
     def test_failed_run_records_error_in_manifest(self, tmp_path: Path) -> None:
         """A failing run records the failing stage and error detail."""
-        config_path = _make_test_config(tmp_path / "configs")
-        # Overwrite with a config that has no valid parser
+        config_dir = tmp_path / "configs"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / "router.yaml"
+        # Use valid parser but no fallback, so parse failure causes pipeline to fail
         config_path.write_text(
             "environment: local\nschema_version: '1'\n"
-            "router:\n  default_route: bad_route\n  routes:\n"
-            "    - name: bad_route\n      description: 'test'\n"
+            "router:\n  default_route: fallback_safe_route\n  routes:\n"
+            "    - name: fallback_safe_route\n      description: 'test'\n"
             "      file_types: ['application/pdf']\n"
-            "      primary_parser: nonexistent\n      fallback_parsers: []\n"
+            "      primary_parser: stdlib_pdf\n      fallback_parsers: []\n"
             "      expected_risks: []\n      post_parse_repairs: []\n"
             "      review_policy: default\n"
             "risk_thresholds:\n  high_risk_score: 0.7\n  medium_risk_score: 0.4\n"
@@ -169,8 +171,11 @@ class TestRunManifestPersistence:
             "      auto_assign_reviewer: false\n      min_reviewers: 1\n"
             "lint_policy:\n  p0_blocks_merge: true\n  p1_blocks_merge: true\n"
         )
+        # Use a corrupted PDF (no %PDF header) so stdlib_pdf fails at parse stage
+        corrupted_pdf = b"CORRUPTED-HEADER\n1 0 obj\n<< /Type /Catalog >>\nendobj\n"
 
-        pdf_path = _write_simple_pdf(tmp_path / "test.pdf")
+        pdf_path = tmp_path / "test.pdf"
+        pdf_path.write_bytes(corrupted_pdf)
         runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
         result = runner.run(file_path=pdf_path)
 

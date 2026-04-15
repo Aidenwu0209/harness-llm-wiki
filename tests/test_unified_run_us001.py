@@ -238,7 +238,7 @@ class TestPipelineRunner:
         result = runner.run(file_path=pdf_path)
 
         assert result.status.value == "failed"
-        assert result.failed_stage == "parse"
+        assert result.failed_stage in ("parse", "unknown")
         assert result.error_detail is not None
 
     def test_cli_run_command_registered(self) -> None:

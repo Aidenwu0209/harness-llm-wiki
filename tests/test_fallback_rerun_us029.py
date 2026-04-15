@@ -25,14 +25,17 @@ from tests.fixtures.build_fixtures import _build_simple_pdf
 # Config helper
 # ---------------------------------------------------------------------------
 
-# Config where primary parser fails (non-existent) but fallback works
+# Config where primary parser fails (corrupted file triggers parse failure)
+# but fallback succeeds.  primary_parser is stdlib_pdf (valid parser name),
+# but we feed a corrupted PDF so stdlib_pdf rejects it (missing %PDF header),
+# then basic_text_fallback takes over and succeeds.
 _FALLBACK_CONFIG_YAML = (
     "environment: local\nschema_version: '1'\n"
     "router:\n  default_route: fallback_route\n  routes:\n"
     "    - name: fallback_route\n"
     "      description: 'Route that triggers fallback'\n"
     "      file_types: ['application/pdf']\n"
-    "      primary_parser: nonexistent_parser\n"
+    "      primary_parser: stdlib_pdf\n"
     "      fallback_parsers: [basic_text_fallback]\n"
     "      expected_risks: []\n      post_parse_repairs: []\n"
     "      review_policy: default\n"
@@ -89,6 +92,26 @@ def _setup_config(tmp_path: Path, config_yaml: str = _NORMAL_CONFIG_YAML) -> Pat
     return config_path
 
 
+def _build_corrupted_pdf() -> bytes:
+    """Create a corrupted PDF (no %PDF header) so stdlib_pdf fails but basic_text_fallback can still extract text."""
+    return (
+        b"CORRUPTED-HEADER\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"3 0 obj\n"
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792]\n"
+        b"   /Contents 4 0 R >>\nendobj\n"
+        b"4 0 obj\n<< /Length 200 >>\nstream\n"
+        b"BT /F1 18 Tf 100 700 Td (Introduction to Document Processing) Tj ET\n"
+        b"BT /F1 12 Tf 100 670 Td (This document describes the DocOS pipeline for parsing documents.) Tj ET\n"
+        b"BT /F1 12 Tf 100 650 Td (The pipeline handles routing, parsing, normalization, and extraction.) Tj ET\n"
+        b"BT /F1 12 Tf 100 630 Td (Each stage produces durable artifacts for audit and traceability.) Tj ET\n"
+        b"BT /F1 12 Tf 100 610 Td (Quality is enforced through lint checks and harness evaluation.) Tj ET\n"
+        b"endstream\nendobj\n"
+        b"trailer\n<< /Size 5 /Root 1 0 R >>\n%%EOF"
+    )
+
+
 class TestFallbackBehavior:
     """Test fallback parser behavior in E2E scenario."""
 
@@ -96,7 +119,7 @@ class TestFallbackBehavior:
         """When primary parser fails, fallback parser succeeds and pipeline completes."""
         config_path = _setup_config(tmp_path, _FALLBACK_CONFIG_YAML)
         pdf_path = tmp_path / "test.pdf"
-        pdf_path.write_bytes(_build_simple_pdf())
+        pdf_path.write_bytes(_build_corrupted_pdf())
 
         runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
         result = runner.run(file_path=pdf_path)
@@ -109,7 +132,7 @@ class TestFallbackBehavior:
         """Fallback parser produces a DocIR that is persisted to disk."""
         config_path = _setup_config(tmp_path, _FALLBACK_CONFIG_YAML)
         pdf_path = tmp_path / "test.pdf"
-        pdf_path.write_bytes(_build_simple_pdf())
+        pdf_path.write_bytes(_build_corrupted_pdf())
 
         runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
         result = runner.run(file_path=pdf_path)
@@ -123,7 +146,7 @@ class TestFallbackBehavior:
         """Manifest records that fallback parser was used."""
         config_path = _setup_config(tmp_path, _FALLBACK_CONFIG_YAML)
         pdf_path = tmp_path / "test.pdf"
-        pdf_path.write_bytes(_build_simple_pdf())
+        pdf_path.write_bytes(_build_corrupted_pdf())
 
         runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
         result = runner.run(file_path=pdf_path)
@@ -138,7 +161,7 @@ class TestFallbackBehavior:
         """Fallback pipeline produces knowledge artifacts."""
         config_path = _setup_config(tmp_path, _FALLBACK_CONFIG_YAML)
         pdf_path = tmp_path / "test.pdf"
-        pdf_path.write_bytes(_build_simple_pdf())
+        pdf_path.write_bytes(_build_corrupted_pdf())
 
         runner = PipelineRunner(base_dir=tmp_path, config_path=config_path)
         result = runner.run(file_path=pdf_path)

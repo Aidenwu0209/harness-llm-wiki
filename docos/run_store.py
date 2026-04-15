@@ -135,7 +135,7 @@ class RunStore:
             return None
         # Sort by started_at descending; fall back to created_at
         candidates.sort(
-            key=lambda m: m.started_at or datetime.min,
+            key=lambda m: m.started_at or m.created_at or datetime.min,
             reverse=True,
         )
         return candidates[0].run_id
