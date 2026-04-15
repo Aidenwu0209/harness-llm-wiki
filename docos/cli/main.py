@@ -359,20 +359,117 @@ def extract(source_id: str, run_id: str | None) -> None:
 
 @cli.command("compile")
 @click.argument("source_id")
-def compile_cmd(source_id: str) -> None:
-    """Compile wiki pages."""
-    from docos.registry import SourceRegistry
-    from docos.source_store import RawStorage
+@click.option("--run-id", default=None, help="Run ID to use for artifact lookup")
+def compile_cmd(source_id: str, run_id: str | None) -> None:
+    """Compile wiki pages from stored DocIR and knowledge artifacts."""
+    from docos.artifact_stores import PatchStore, WikiStore, WikiPageState
+    from docos.ir_store import IRStore
+    from docos.knowledge_store import KnowledgeStore
+    from docos.models.patch_set import PatchSet
+    from docos.run_store import RunStore
+    from docos.wiki.compiler import CompiledPage, WikiCompiler
 
     base = Path(".")
+
+    # Resolve run_id
+    if run_id is None:
+        run_store = RunStore(base)
+        run_id = run_store.find_latest_run(source_id)
+        if run_id is None:
+            click.echo(json.dumps({"error": f"No run found for source: {source_id}"}))
+            raise SystemExit(1)
+
+    # Load DocIR
+    ir_store = IRStore(base / "ir")
+    docir = ir_store.get(run_id)
+    if docir is None:
+        click.echo(json.dumps({"error": f"No parse artifact found for run: {run_id}"}))
+        raise SystemExit(1)
+
+    # Load knowledge
+    ks = KnowledgeStore(base / "knowledge")
+    knowledge = ks.get(run_id)
+    entities = knowledge.entities if knowledge else []
+    claims = knowledge.claims if knowledge else []
+
+    # Compile pages
+    compiler = WikiCompiler(base / "wiki")
+    wiki_store = WikiStore(base / "wiki_state")
+    patch_store = PatchStore(base / "patches")
+    patches = []
+    page_types: list[str] = []
+
+    from docos.source_store import RawStorage
+    from docos.registry import SourceRegistry
+
     raw = RawStorage(base / "raw")
     registry = SourceRegistry(base / "registry", raw)
     source = registry.get(source_id)
-    if source is None:
-        click.echo(json.dumps({"error": f"Source not found: {source_id}"}))
-        raise SystemExit(1)
 
-    click.echo(json.dumps({"status": "compiled", "source_id": source_id}))
+    if source is not None:
+        # Source page
+        fm, body, page_path = compiler.compile_source_page(source, docir, entities, claims)
+        compiled = CompiledPage(frontmatter=fm, body=body, page_path=page_path, run_id=run_id)
+        patch = compiled.compute_patch(run_id=run_id, source_id=source_id)
+        if patch is not None:
+            patches.append(patch)
+        page_types.append("source")
+        wiki_store.save(WikiPageState(
+            page_path=str(page_path), run_id=run_id,
+            frontmatter=fm.model_dump(), body=body,
+        ))
+
+    # Entity pages
+    for entity in entities:
+        efm, ebody, epath = compiler.compile_entity_page(entity, claims)
+        ecompiled = CompiledPage(frontmatter=efm, body=ebody, page_path=epath, run_id=run_id)
+        epatch = ecompiled.compute_patch(run_id=run_id, source_id=source_id)
+        if epatch is not None:
+            patches.append(epatch)
+        page_types.append("entity")
+        wiki_store.save(WikiPageState(
+            page_path=str(epath), run_id=run_id,
+            frontmatter=efm.model_dump(), body=ebody,
+        ))
+
+    # Concept pages
+    concept_names: set[str] = set()
+    for entity in entities:
+        if entity.entity_type.value in ("concept", "topic", "theme"):
+            concept_names.add(entity.canonical_name)
+    for concept_name in concept_names:
+        related_entities = [e for e in entities if e.canonical_name == concept_name]
+        related_claims = [c for c in claims if concept_name in c.statement]
+        cfm, cbody, cpath = compiler.compile_concept_page(
+            concept_name=concept_name,
+            source_ids=[source_id],
+            related_claims=related_claims,
+            related_entities=related_entities,
+        )
+        ccompiled = CompiledPage(frontmatter=cfm, body=cbody, page_path=cpath, run_id=run_id)
+        cpatch = ccompiled.compute_patch(run_id=run_id, source_id=source_id)
+        if cpatch is not None:
+            patches.append(cpatch)
+        page_types.append("concept")
+        wiki_store.save(WikiPageState(
+            page_path=str(cpath), run_id=run_id,
+            frontmatter=cfm.model_dump(), body=cbody,
+        ))
+
+    # Save patch set
+    ps = PatchSet.from_patches(run_id, source_id, patches)
+    for p in patches:
+        patch_store.save(p)
+    patch_store.save_patch_set(ps)
+
+    click.echo(json.dumps({
+        "status": "compiled",
+        "source_id": source_id,
+        "run_id": run_id,
+        "page_count": len(page_types),
+        "page_types": page_types,
+        "patch_count": len(patches),
+    }))
 
 
 @cli.command()
