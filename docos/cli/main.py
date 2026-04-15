@@ -360,22 +360,17 @@ def lint(run_id: str | None) -> None:
 def eval_cmd(run_id: str | None) -> None:
     """Run harness evaluation."""
     from docos.artifact_stores import ReportStore
-    from docos.harness.runner import HarnessRunner
-    from docos.run_store import RunStore
+    from docos.harness.service import run_eval_for_run
 
     base = Path(".")
     if run_id is None:
         click.echo(json.dumps({"error": "Please provide --run-id"}))
         raise SystemExit(1)
 
-    run_store = RunStore(base)
-    manifest = run_store.get(run_id)
-    if manifest is None:
+    report = run_eval_for_run(base, run_id)
+    if report is None:
         click.echo(json.dumps({"error": f"Run not found: {run_id}"}))
         raise SystemExit(1)
-
-    runner = HarnessRunner()
-    report = runner.run(run_id=run_id, source_id=manifest.source_id)
 
     rs = ReportStore(base / "reports")
     rs.save(report)
