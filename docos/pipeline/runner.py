@@ -680,33 +680,47 @@ class PipelineRunner:
     ) -> None:
         """Stage 11: Review stage — records review status based on gate outcome.
 
-        For auto-merge eligible runs, records an auto-merge review outcome.
+        For auto-merge eligible runs, stages and auto-merges all patches
+        through PatchService and writes a structured review artifact.
         For blocked runs, records a pending-review status.
         """
         try:
             manifest.mark_stage("review", StageStatus.RUNNING)
             self._run_store.update(manifest)
 
-            if gate_passed:
-                # Auto-merge path: all patches can be auto-merged
+            if gate_passed and not any(p.review_required for p in patches):
+                # Auto-merge path: stage and auto-merge all patches through PatchService
+                from docos.wiki.patch_service import PatchService
+
+                patch_svc = PatchService(
+                    patch_dir=self._base / "patches",
+                    wiki_dir=self._base / "wiki_state",
+                )
+                for p in patches:
+                    patch_svc.auto_merge(p)
+
                 manifest.review_status = "auto_merged"
                 manifest.release_reasoning = gate_reasons if gate_reasons else ["All gates passed — auto-merged"]
+                result.review_status = "auto_merged"
             else:
                 # Pending review path: gate blocked auto-merge
                 manifest.review_status = "pending"
                 manifest.release_reasoning = gate_reasons
+                result.review_status = "pending"
 
             # Persist review artifact
             review_dir = self._base / "review"
             review_dir.mkdir(parents=True, exist_ok=True)
             review_artifact = review_dir / f"{manifest.run_id}.json"
-            review_data = {
+            review_data: dict[str, Any] = {
                 "run_id": manifest.run_id,
                 "source_id": manifest.source_id,
                 "review_status": manifest.review_status,
+                "release_decision": "auto_merge" if gate_passed else "blocked",
                 "gate_passed": gate_passed,
                 "gate_reasons": gate_reasons,
                 "patch_count": len(patches),
+                "patch_ids": [p.patch_id for p in patches],
                 "release_reasoning": manifest.release_reasoning,
             }
             review_artifact.write_text(

@@ -12,5 +12,16 @@
 - **Future iteration learnings:**
   - CLI report command uses `Path(".")` as base, not tmp_path — test manifest data directly for report-related assertions
   - Fixtures must be built on-demand with `get_fixture()` before integration tests can use them
+  - ReviewItem already has good defaults for optional fields — new fields with `Field(default_factory=...)` maintain backward compat
+---
+
+## 2026-04-15 13:22 - US-002
+- Added run_id, patch_ids, gate_reasons, lint_summary, harness_summary fields to ReviewItem model
+- All fields have safe defaults for backward compatibility with old review items
+- Tests verify field storage, JSON persistence, reload, and backward compatibility
+- Changed files: docos/review/queue.py, tests/test_review_item_us002.py
+- **Future iteration learnings:**
+  - Pydantic v2 model_validate_json handles missing optional fields gracefully when defaults are set
+  - ReviewQueue._load_all() already handles corrupted files — adding new fields doesn't break the load path
 ---
 
