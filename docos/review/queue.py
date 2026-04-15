@@ -47,17 +47,30 @@ class ReviewAction(BaseModel):
 
 
 class ReviewItem(BaseModel):
-    """An item in the review queue."""
+    """An item in the review queue.
+
+    Supports both single-object reviews and run-level patch-set reviews.
+    Run-level items carry ``run_id``, ``patch_ids``, and gate/lint/harness context.
+    """
 
     review_id: str
     item_type: ReviewItemType
     target_object_id: str = Field(description="Patch ID, claim ID, or entity ID")
     source_id: str = ""
 
+    # Run-level patch-set fields (US-002)
+    run_id: str | None = Field(default=None, description="Linked run ID for run-level patch-set reviews")
+    patch_ids: list[str] = Field(default_factory=list, description="Related patch IDs in this review item")
+
     # Why it's in the queue
     reason: str = ""
     risk_score: float = 0.0
     blast_radius_pages: int = 0
+
+    # Run-level gate / quality context (US-002)
+    gate_reasons: list[str] = Field(default_factory=list, description="Gate block reasons for this review item")
+    lint_summary: dict[str, int] = Field(default_factory=dict, description="Lint findings summary by severity")
+    harness_summary: dict[str, Any] = Field(default_factory=dict, description="Harness evaluation summary")
 
     # Status
     status: ReviewDecision = ReviewDecision.PENDING
