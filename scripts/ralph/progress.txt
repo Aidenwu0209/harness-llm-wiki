@@ -97,3 +97,14 @@
 - Changed files: tests/test_compile_concept_us010.py
 ---
 
+## 2026-04-15 13:22 - US-011
+- Added WikiStore.list_page_paths() to enumerate stored wiki state
+- Compile stage compares current page paths vs prior wiki state for entity/concept pages
+- Stale pages generate DELETE_PAGE patches; source pages excluded from deletion
+- Changed files: docos/artifact_stores.py, docos/pipeline/runner.py, tests/test_compile_delete_us011.py
+- **Future iteration learnings:**
+  - Entity page paths use `entities/` dir, concept pages use `concepts/` dir (not `entity/`/`concept/`)
+  - WikiCompiler must use same wiki_dir as runner's base/wiki when pre-populating wiki state in tests
+  - SourceRecord requires byte_size field; DocIR requires doc_id, source_id, parser, page_count
+---
+

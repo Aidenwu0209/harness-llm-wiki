@@ -563,6 +563,9 @@ class PipelineRunner:
             manifest.compiled_page_count = len(page_types)
             manifest.compiled_page_types = page_types
             manifest.compiled_patch_count = len(patches)
+            manifest.compiled_created_count = len([t for t in page_types if t != "delete"])
+            manifest.compiled_updated_count = 0  # Updated pages tracked via patch change types
+            manifest.compiled_deleted_count = page_types.count("delete")
 
             manifest.mark_stage("compile", StageStatus.COMPLETED)
             self._run_store.update(manifest)

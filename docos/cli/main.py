@@ -543,6 +543,17 @@ def report(run_id: str) -> None:
     # Patch artifact
     result["patch_artifact"] = str(manifest.patch_artifact_path) if manifest.patch_artifact_path else "not-generated-yet"
 
+    # Compile summary (US-012)
+    if manifest.compiled_page_count > 0:
+        result["compile_summary"] = {
+            "page_count": manifest.compiled_page_count,
+            "page_types": manifest.compiled_page_types,
+            "patch_count": manifest.compiled_patch_count,
+            "created_count": manifest.compiled_created_count,
+            "updated_count": manifest.compiled_updated_count,
+            "deleted_count": manifest.compiled_deleted_count,
+        }
+
     # Lint findings — prefer manifest summary, always include artifact path
     if manifest.lint_artifact_path and Path(manifest.lint_artifact_path).exists():
         lint_data = json.loads(Path(manifest.lint_artifact_path).read_text())
