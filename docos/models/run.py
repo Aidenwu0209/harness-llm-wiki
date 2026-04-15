@@ -127,6 +127,11 @@ class RunManifest(BaseModel):
     release_reasoning: list[str] = Field(default_factory=list, description="Reasoning for the release decision")
     review_status: str | None = Field(default=None, description="Current review status (pending/approved/rejected/none)")
 
+    # Compile summary fields (US-008)
+    compiled_page_count: int = Field(default=0, description="Total number of compiled pages")
+    compiled_page_types: list[str] = Field(default_factory=list, description="Types of compiled pages (source, entity, concept)")
+    compiled_patch_count: int = Field(default=0, description="Number of patches generated during compile")
+
     # Manual override audit fields (US-026)
     override_reviewer: str | None = Field(default=None, description="Identity of the reviewer who overrode the gate")
     override_reason: str | None = Field(default=None, description="Required reason for the manual override")

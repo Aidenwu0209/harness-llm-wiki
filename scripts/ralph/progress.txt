@@ -65,3 +65,10 @@
 - Changed files: docos/review/queue.py, tests/test_review_reject_us006.py
 ---
 
+## 2026-04-15 13:22 - US-007
+- Added find_by_run_id to ReviewQueue for idempotent lookups
+- _stage_review checks for existing review item before creating new one
+- Different runs for same source create independent review items
+- Changed files: docos/review/queue.py, docos/pipeline/runner.py, tests/test_review_idempotent_us007.py
+---
+

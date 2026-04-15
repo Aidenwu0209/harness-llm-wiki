@@ -432,21 +432,21 @@ class PipelineRunner:
         claims: list[ClaimRecord],
         result: PipelineResult,
     ) -> list[Patch]:
-        """Stage 6: Compile wiki pages and generate patches."""
+        """Stage 6: Compile wiki pages and generate patches via unified page loop."""
         try:
             manifest.mark_stage("compile", StageStatus.RUNNING)
             self._run_store.update(manifest)
 
             compiler = WikiCompiler(self._base / "wiki")
-            patches: list[Patch] = []
-
-            # Compile source page
-            fm, body, page_path = compiler.compile_source_page(source, docir, entities, claims)
-            page_content = compiler.render_page(fm, body)
-
-            # Generate patch for the source page
+            from docos.artifact_stores import WikiPageState
             from docos.wiki.compiler import CompiledPage
 
+            patches: list[Patch] = []
+            page_types: list[str] = []
+
+            # --- Unified page loop ---
+            # 1. Source page
+            fm, body, page_path = compiler.compile_source_page(source, docir, entities, claims)
             compiled = CompiledPage(
                 frontmatter=fm,
                 body=body,
@@ -459,17 +459,76 @@ class PipelineRunner:
             )
             if patch is not None:
                 patches.append(patch)
-
-            # Save wiki page state
-            from docos.artifact_stores import WikiPageState
-
-            wiki_state = WikiPageState(
+            page_types.append("source")
+            self._wiki_store.save(WikiPageState(
                 page_path=str(page_path),
                 run_id=manifest.run_id,
                 frontmatter=fm.model_dump(),
                 body=body,
-            )
-            self._wiki_store.save(wiki_state)
+            ))
+
+            # 2. Entity pages
+            for entity in entities:
+                efm, ebody, epath = compiler.compile_entity_page(entity, claims)
+                ecompiled = CompiledPage(
+                    frontmatter=efm,
+                    body=ebody,
+                    page_path=epath,
+                    run_id=manifest.run_id,
+                )
+                epatch = ecompiled.compute_patch(
+                    run_id=manifest.run_id,
+                    source_id=source.source_id,
+                )
+                if epatch is not None:
+                    patches.append(epatch)
+                page_types.append("entity")
+                self._wiki_store.save(WikiPageState(
+                    page_path=str(epath),
+                    run_id=manifest.run_id,
+                    frontmatter=efm.model_dump(),
+                    body=ebody,
+                ))
+
+            # 3. Concept pages (derived from entities and claims)
+            concept_names: set[str] = set()
+            for entity in entities:
+                if entity.entity_type in ("concept", "topic", "theme"):
+                    concept_names.add(entity.canonical_name)
+            for concept_name in concept_names:
+                related_entities = [e for e in entities if e.canonical_name == concept_name]
+                related_claims = [c for c in claims if
+                    concept_name in c.statement]
+                cfm, cbody, cpath = compiler.compile_concept_page(
+                    concept_name=concept_name,
+                    source_ids=[source.source_id],
+                    related_claims=related_claims,
+                    related_entities=related_entities,
+                )
+                ccompiled = CompiledPage(
+                    frontmatter=cfm,
+                    body=cbody,
+                    page_path=cpath,
+                    run_id=manifest.run_id,
+                )
+                cpatch = ccompiled.compute_patch(
+                    run_id=manifest.run_id,
+                    source_id=source.source_id,
+                )
+                if cpatch is not None:
+                    patches.append(cpatch)
+                page_types.append("concept")
+                self._wiki_store.save(WikiPageState(
+                    page_path=str(cpath),
+                    run_id=manifest.run_id,
+                    frontmatter=cfm.model_dump(),
+                    body=cbody,
+                ))
+
+            # Record compile summary in manifest
+            manifest.compiled_page_count = len(page_types)
+            manifest.compiled_page_types = page_types
+            manifest.compiled_patch_count = len(patches)
 
             manifest.mark_stage("compile", StageStatus.COMPLETED)
             self._run_store.update(manifest)
