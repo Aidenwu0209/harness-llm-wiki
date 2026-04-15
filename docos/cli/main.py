@@ -553,17 +553,34 @@ def review() -> None:
 
 
 @review.command("list")
-def review_list() -> None:
-    """List pending review items."""
+@click.option("--run-id", default=None, help="Filter by run ID")
+@click.option("--source-id", default=None, help="Filter by source ID")
+def review_list(run_id: str | None, source_id: str | None) -> None:
+    """List review items, optionally filtered by run or source."""
     from docos.review.queue import ReviewQueue
 
     base = Path(".")
     queue = ReviewQueue(base / "review")
     pending = queue.list_pending()
+
+    # Apply filters
+    if run_id:
+        pending = [r for r in pending if r.run_id == run_id]
+    if source_id:
+        pending = [r for r in pending if r.source_id == source_id]
+
     if not pending:
         click.echo(json.dumps({"pending": []}))
     else:
-        items = [{"review_id": r.review_id, "type": r.item_type.value, "reason": r.reason} for r in pending]
+        items = [{
+            "review_id": r.review_id,
+            "type": r.item_type.value,
+            "reason": r.reason,
+            "run_id": r.run_id,
+            "source_id": r.source_id,
+            "patch_ids": r.patch_ids,
+            "gate_reasons": r.gate_reasons,
+        } for r in pending]
         click.echo(json.dumps({"pending": items}, indent=2))
 
 
@@ -777,6 +794,40 @@ def report(run_id: str) -> None:
         pending = rq.list_pending()
         run_reviews = [r for r in pending if run_id in r.target_object_id or run_id in r.source_id]
         result["review_status"] = "pending" if run_reviews else "none"
+
+    # Review decision history (US-033)
+    review_queue_dir = base / "review_queue" / "resolutions"
+    if review_queue_dir.exists():
+        review_history = []
+        for res_file in review_queue_dir.glob("*.json"):
+            res_data = json.loads(res_file.read_text(encoding="utf-8"))
+            if res_data.get("run_id") == run_id:
+                review_history.append({
+                    "review_id": res_data.get("review_id"),
+                    "action": res_data.get("action"),
+                    "reviewer": res_data.get("reviewer"),
+                    "resolved_at": res_data.get("resolved_at"),
+                })
+        if review_history:
+            result["review_history"] = review_history
+
+    # Patch merge history (US-033)
+    from docos.artifact_stores import PatchStore
+    pstore = PatchStore(base / "patches")
+    patchset = pstore.get_patch_set(run_id)
+    if patchset is not None:
+        merge_history = []
+        for pid in patchset.patch_ids:
+            p = pstore.get(pid)
+            if p is not None:
+                merge_history.append({
+                    "patch_id": p.patch_id,
+                    "merge_status": p.merge_status.value,
+                    "reviewer": p.reviewer,
+                    "merged_at": p.merged_at.isoformat() if p.merged_at else None,
+                })
+        if merge_history:
+            result["patch_merge_history"] = merge_history
 
     # Debug assets
     if manifest.debug_artifact_path:
