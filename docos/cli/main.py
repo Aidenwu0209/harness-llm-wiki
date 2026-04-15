@@ -338,8 +338,16 @@ def lint(run_id: str | None) -> None:
     """Run lint checks on wiki state."""
     from docos.lint.checker import WikiLinter
 
-    linter = WikiLinter()
-    findings = linter.lint(pages=[], claims=[], entities=[])
+    base = Path(".")
+
+    if run_id:
+        from docos.lint.service import run_lint_for_run
+
+        findings = run_lint_for_run(base, run_id)
+    else:
+        linter = WikiLinter()
+        findings = linter.lint(pages=[], claims=[], entities=[])
+
     if findings:
         for f in findings:
             click.echo(f"[{f.severity.value}] {f.code}: {f.message}")
