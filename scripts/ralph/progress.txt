@@ -72,3 +72,13 @@
 - Changed files: docos/review/queue.py, docos/pipeline/runner.py, tests/test_review_idempotent_us007.py
 ---
 
+## 2026-04-15 13:22 - US-008
+- Refactored _stage_compile into unified page loop: source → entity → concept pages
+- Added compiled_page_count, compiled_page_types, compiled_patch_count to RunManifest
+- Each page type goes through same CompiledPage.compute_patch flow
+- Changed files: docos/models/run.py, docos/pipeline/runner.py, tests/test_compile_loop_us008.py
+- **Future iteration learnings:**
+  - EntityRecord uses canonical_name (not name), ClaimRecord uses statement (not subject)
+  - ClaimRecord.object is aliased as "object" but accessed as object_value
+---
+
