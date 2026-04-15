@@ -694,14 +694,13 @@ class PipelineRunner:
             from docos.harness.runner import HarnessRunner
 
             runner = HarnessRunner()
-            patch = patches[0] if patches else None
             report = runner.run(
                 run_id=manifest.run_id,
                 source_id=manifest.source_id,
                 docir=docir,
                 claims=claims if claims else None,
                 entities=entities if entities else None,
-                patch=patch,
+                patches=patches,
             )
 
             self._report_store.save(report)

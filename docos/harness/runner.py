@@ -82,6 +82,7 @@ class HarnessRunner:
         entities: list[EntityRecord] | None = None,
         patch: Patch | None = None,
         previous_report: HarnessReport | None = None,
+        patches: list[Patch] | None = None,
     ) -> HarnessReport:
         """Run full harness evaluation.
 
@@ -91,10 +92,11 @@ class HarnessRunner:
         report = HarnessReport(run_id=run_id, source_id=source_id)
         claims = claims or []
         entities = entities or []
+        effective_patches = patches if patches is not None else ([patch] if patch is not None else [])
 
         self._eval_parse_quality(report, docir)
         self._eval_knowledge_quality(report, claims)
-        self._eval_maintenance_quality(report, entities, patch)
+        self._eval_maintenance_quality(report, entities, effective_patches)
 
         # Regression check
         if previous_report:
@@ -168,7 +170,7 @@ class HarnessRunner:
         self,
         report: HarnessReport,
         entities: list[EntityRecord],
-        patch: Patch | None,
+        patches: list[Patch],
     ) -> None:
         metrics = report.maintenance_quality.metrics
         metrics["entity_count"] = len(entities)
@@ -183,11 +185,16 @@ class HarnessRunner:
         dup_rate = dup_count / len(entities) * 100 if entities else 0
         metrics["duplicate_entity_rate_pct"] = round(dup_rate, 1)
 
-        # Patch blast radius
-        if patch:
-            metrics["blast_pages"] = patch.blast_radius.pages
-            metrics["blast_claims"] = patch.blast_radius.claims
-            metrics["risk_score"] = patch.risk_score
+        # Patch-set aware metrics (US-016)
+        if patches:
+            total_pages_changed = len({c.target for p in patches for c in p.changes})
+            aggregate_risk = max(p.risk_score for p in patches)
+            metrics["total_patches"] = len(patches)
+            metrics["total_pages_changed"] = total_pages_changed
+            metrics["aggregate_risk_score"] = aggregate_risk
+            metrics["blast_pages"] = sum(p.blast_radius.pages for p in patches)
+            metrics["blast_claims"] = sum(p.blast_radius.claims for p in patches)
+            metrics["risk_score"] = aggregate_risk
 
         report.maintenance_quality.passed = dup_rate <= 3
         if dup_rate > 3:
