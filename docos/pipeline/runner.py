@@ -593,8 +593,18 @@ class PipelineRunner:
                 p.stage()
                 self._patch_store.save(p)
 
+            # Persist PatchSet for run-level access (US-014)
+            from docos.models.patch_set import PatchSet
+
+            patch_set = PatchSet.from_patches(
+                run_id=manifest.run_id,
+                source_id=manifest.source_id,
+                patches=patches,
+            )
+            self._patch_store.save_patch_set(patch_set)
+
             if patches:
-                manifest.patch_artifact_path = str(self._base / "patches" / patches[0].patch_id)
+                manifest.patch_artifact_path = str(self._base / "patches" / f"patchset-{manifest.run_id}")
 
             manifest.mark_stage("patch", StageStatus.COMPLETED)
             self._run_store.update(manifest)

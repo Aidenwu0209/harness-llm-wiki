@@ -70,6 +70,22 @@ class PatchStore(_JsonArtifactStore):
             return None
         return Patch.model_validate(data)
 
+    def save_patch_set(self, patch_set: Any) -> Path:
+        """Persist a PatchSet artifact. Key is run_id."""
+        from docos.models.patch_set import PatchSet
+        data = json.loads(patch_set.model_dump_json())
+        key = f"patchset-{patch_set.run_id}"
+        return self._save_json(key, data)
+
+    def get_patch_set(self, run_id: str) -> Any:
+        """Load a PatchSet by run_id with all linked patches intact."""
+        from docos.models.patch_set import PatchSet
+        key = f"patchset-{run_id}"
+        data = self._load_json(key)
+        if data is None:
+            return None
+        return PatchSet.model_validate(data)
+
 
 # ---------------------------------------------------------------------------
 # Report Store
