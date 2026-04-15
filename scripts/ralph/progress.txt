@@ -36,3 +36,15 @@
   - PatchService must be instantiated with correct patch_dir and wiki_dir matching PipelineRunner stores
 ---
 
+## 2026-04-15 13:22 - US-004
+- Added pending review path in _stage_review: creates run-level ReviewItem via ReviewQueue
+- Added review_ids field to RunManifest for tracking linked review items
+- Condition: gate blocked OR any patch has review_required → pending review item
+- Review item stores run_id, source_id, patch_ids, gate_reasons, lint_summary, harness_summary
+- Changed files: docos/models/run.py, docos/pipeline/runner.py, tests/test_review_pending_us004.py
+- **Future iteration learnings:**
+  - Change model uses `type` field (not `change_type`) and has no `content` field; use `target` and `summary`
+  - ChangeType enum values are CREATE_PAGE, UPDATE_PAGE, DELETE_PAGE (not CREATE, UPDATE, DELETE)
+  - Using PipelineRunner.__new__() allows testing single stage methods without full pipeline init
+---
+

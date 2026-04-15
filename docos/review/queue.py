@@ -164,6 +164,93 @@ class ReviewQueue:
 
         return item
 
+    def resolve_and_sync(
+        self,
+        review_id: str,
+        action: str,
+        reviewer: str,
+        reason: str = "",
+        patch_dir: Path | None = None,
+        run_dir: Path | None = None,
+    ) -> tuple[ReviewItem | None, dict[str, Any]]:
+        """Resolve a review item and synchronize linked patch + manifest state.
+
+        Returns (review_item, sync_report) where sync_report contains
+        details about patches and manifest updates.
+        """
+        from docos.artifact_stores import PatchStore
+        from docos.models.patch import MergeStatus
+        from docos.run_store import RunStore
+
+        item = self.resolve(review_id, action, reviewer, reason)
+        if item is None:
+            return None, {}
+
+        sync_report: dict[str, Any] = {
+            "review_id": review_id,
+            "action": action,
+            "patches_updated": [],
+            "manifest_updated": False,
+        }
+
+        if action == "approve" and patch_dir is not None:
+            patch_store = PatchStore(patch_dir)
+            for pid in item.patch_ids:
+                patch = patch_store.get(pid)
+                if patch is not None:
+                    patch.approve_merge(reviewer=reviewer, note=reason)
+                    patch_store.save(patch)
+                    sync_report["patches_updated"].append(pid)
+
+        # Update manifest if run_id is available
+        if item.run_id and run_dir is not None:
+            run_store = RunStore(run_dir)
+            manifest = run_store.get(item.run_id)
+            if manifest is not None:
+                if action == "approve":
+                    manifest.review_status = "approved"
+                    manifest.release_reasoning = (
+                        [f"Approved by {reviewer}: {reason}"] if reason
+                        else [f"Approved by {reviewer}"]
+                    )
+                elif action == "reject":
+                    manifest.review_status = "rejected"
+                    manifest.release_reasoning = (
+                        [f"Rejected by {reviewer}: {reason}"] if reason
+                        else [f"Rejected by {reviewer}"]
+                    )
+                elif action == "request_changes":
+                    manifest.review_status = "changes_requested"
+                    manifest.release_reasoning = (
+                        [f"Changes requested by {reviewer}: {reason}"] if reason
+                        else [f"Changes requested by {reviewer}"]
+                    )
+                run_store.update(manifest)
+                sync_report["manifest_updated"] = True
+
+        # Write resolution artifact
+        resolution_dir = self._base / "resolutions"
+        resolution_dir.mkdir(parents=True, exist_ok=True)
+        resolution_artifact = resolution_dir / f"{review_id}.json"
+        resolution_data = {
+            "review_id": review_id,
+            "action": action,
+            "reviewer": reviewer,
+            "reason": reason,
+            "run_id": item.run_id,
+            "patch_ids": item.patch_ids,
+            "patches_updated": sync_report["patches_updated"],
+            "manifest_updated": sync_report["manifest_updated"],
+            "resolved_at": datetime.now().isoformat(),
+        }
+        resolution_artifact.write_text(
+            json.dumps(resolution_data, indent=2, default=str),
+            encoding="utf-8",
+        )
+        sync_report["resolution_artifact"] = str(resolution_artifact)
+
+        return item, sync_report
+
     def _persist(self, item: ReviewItem, subdir: str) -> None:
         path = self._base / subdir / f"{item.review_id}.json"
         path.write_text(item.model_dump_json(indent=2), encoding="utf-8")
