@@ -179,8 +179,13 @@ class ReviewQueue:
         reason: str = "",
         patch_dir: Path | None = None,
         run_dir: Path | None = None,
+        wiki_dir: Path | None = None,
+        wiki_state_dir: Path | None = None,
     ) -> tuple[ReviewItem | None, dict[str, Any]]:
         """Resolve a review item and synchronize linked patch + manifest state.
+
+        When action is "approve", applies wiki state through PatchApplyService
+        if wiki_dir is provided.
 
         Returns (review_item, sync_report) where sync_report contains
         details about patches and manifest updates.
@@ -202,12 +207,24 @@ class ReviewQueue:
 
         if action == "approve" and patch_dir is not None:
             patch_store = PatchStore(patch_dir)
+            approved_patches = []
             for pid in item.patch_ids:
                 patch = patch_store.get(pid)
                 if patch is not None:
                     patch.approve_merge(reviewer=reviewer, note=reason)
                     patch_store.save(patch)
                     sync_report["patches_updated"].append(pid)
+                    approved_patches.append(patch)
+
+            # Apply wiki state for approved patches
+            if wiki_dir is not None and approved_patches:
+                from docos.artifact_stores import WikiStore
+                from docos.patch_apply import PatchApplyService
+
+                ws = WikiStore(wiki_state_dir) if wiki_state_dir else None
+                apply_svc = PatchApplyService(wiki_dir, wiki_store=ws)
+                apply_results = apply_svc.apply_batch(approved_patches)
+                sync_report["wiki_applied"] = len([r for r in apply_results if r.changes_applied > 0])
 
         elif action == "reject" and patch_dir is not None:
             patch_store = PatchStore(patch_dir)

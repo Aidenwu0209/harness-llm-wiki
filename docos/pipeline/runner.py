@@ -838,6 +838,7 @@ class PipelineRunner:
             if gate_passed and not any(p.review_required for p in patches):
                 # Auto-merge path: stage and auto-merge all patches through PatchService
                 from docos.wiki.patch_service import PatchService
+                from docos.patch_apply import PatchApplyService
 
                 patch_svc = PatchService(
                     patch_dir=self._base / "patches",
@@ -845,6 +846,13 @@ class PipelineRunner:
                 )
                 for p in patches:
                     patch_svc.auto_merge(p)
+
+                # Apply wiki state for all merged patches
+                apply_svc = PatchApplyService(
+                    wiki_dir=self._base / "wiki",
+                    wiki_store=self._wiki_store,
+                )
+                apply_svc.apply_batch(patches)
 
                 manifest.review_status = "auto_merged"
                 manifest.release_reasoning = gate_reasons if gate_reasons else ["All gates passed — auto-merged"]
