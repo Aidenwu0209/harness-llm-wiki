@@ -309,22 +309,52 @@ def normalize(source_id: str, run_id: str | None) -> None:
 
 @cli.command()
 @click.argument("source_id")
-def extract(source_id: str) -> None:
-    """Extract entities, claims, and relations."""
+@click.option("--run-id", default=None, help="Run ID to use for artifact lookup")
+def extract(source_id: str, run_id: str | None) -> None:
+    """Extract entities, claims, and relations from stored DocIR."""
     from docos.ir_store import IRStore
     from docos.knowledge.extractor import KnowledgeExtractionPipeline
-    from docos.registry import SourceRegistry
-    from docos.source_store import RawStorage
+    from docos.knowledge_store import KnowledgeArtifact, KnowledgeStore
+    from docos.run_store import RunStore
 
     base = Path(".")
-    raw = RawStorage(base / "raw")
-    registry = SourceRegistry(base / "registry", raw)
-    source = registry.get(source_id)
-    if source is None:
-        click.echo(json.dumps({"error": f"Source not found: {source_id}"}))
+
+    # Resolve run_id
+    if run_id is None:
+        run_store = RunStore(base)
+        run_id = run_store.find_latest_run(source_id)
+        if run_id is None:
+            click.echo(json.dumps({"error": f"No run found for source: {source_id}"}))
+            raise SystemExit(1)
+
+    ir_store = IRStore(base / "ir")
+    docir = ir_store.get(run_id)
+    if docir is None:
+        click.echo(json.dumps({"error": f"No parse artifact found for run: {run_id}"}))
         raise SystemExit(1)
 
-    click.echo(json.dumps({"status": "extracted", "source_id": source_id}))
+    pipeline = KnowledgeExtractionPipeline()
+    entities, claims, relations = pipeline.extract(docir)
+
+    # Persist knowledge artifacts
+    ks = KnowledgeStore(base / "knowledge")
+    artifact = KnowledgeArtifact(
+        run_id=run_id,
+        source_id=source_id,
+        entities=entities,
+        claims=claims,
+        relations=relations,
+    )
+    ks.save(artifact)
+
+    click.echo(json.dumps({
+        "status": "extracted",
+        "source_id": source_id,
+        "run_id": run_id,
+        "entities": len(entities),
+        "claims": len(claims),
+        "relations": len(relations),
+    }))
 
 
 @cli.command("compile")
