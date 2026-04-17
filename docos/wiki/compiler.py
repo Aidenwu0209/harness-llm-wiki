@@ -181,12 +181,38 @@ def _frontmatter_yaml(fm: Frontmatter) -> str:
 
 
 def _slug(text: str) -> str:
-    """Create a slug from text."""
-    import re
-    s = text.lower().strip()
-    s = re.sub(r"[^\w\s-]", "", s)
-    s = re.sub(r"[\s_]+", "-", s)
-    return s[:80].strip("-")
+    """Create a deterministic ASCII-safe slug from text.
+
+    Delegates to :func:`docos.slugify.slugify` so that all wiki page
+    filenames go through one canonical sanitizer.
+    """
+    from docos.slugify import slugify
+
+    return slugify(text)
+
+
+def _clean_title(text: str) -> str:
+    """Sanitize a page title before it enters frontmatter or body text.
+
+    Delegates to :func:`docos.slugify.sanitize_title` so that control
+    characters and binary garbage are removed at a single choke point.
+    """
+    from docos.slugify import sanitize_title
+
+    return sanitize_title(text)
+
+
+def _is_valid_page_path(page_path: Path) -> bool:
+    """Return ``True`` when *page_path* has a non-empty slug suitable for export.
+
+    A page path like ``concepts/.md`` (empty slug) is rejected.  The check
+    strips the ``.md`` suffix and verifies that the remaining base name is
+    non-empty and not merely whitespace.
+    """
+    name = page_path.name
+    # Strip .md suffix to get the slug portion.
+    slug = name[:-3] if name.endswith(".md") else name
+    return bool(slug.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -215,11 +241,12 @@ class WikiCompiler:
         claims: list[ClaimRecord],
     ) -> tuple[Frontmatter, str, Path]:
         """Compile a source summary page."""
+        clean_name = _clean_title(source.file_name)
         today = date.today()
         fm = Frontmatter(
             id=f"source.{source.source_id}",
             type=PageType.SOURCE,
-            title=source.file_name,
+            title=clean_name,
             status=PageStatus.AUTO,
             created_at=today,
             updated_at=today,
@@ -231,7 +258,7 @@ class WikiCompiler:
 
         # Content
         summary_lines = [
-            f"# {source.file_name}",
+            f"# {clean_name}",
             "",
             f"**Source ID:** `{source.source_id}`  ",
             f"**MIME Type:** {source.mime_type}  ",
@@ -293,11 +320,12 @@ class WikiCompiler:
         claims: list[ClaimRecord],
     ) -> tuple[Frontmatter, str, Path]:
         """Compile an entity page."""
+        clean_name = _clean_title(entity.canonical_name)
         today = date.today()
         fm = Frontmatter(
             id=f"entity.{_slug(entity.canonical_name)}",
             type=PageType.ENTITY,
-            title=entity.canonical_name,
+            title=clean_name,
             status=PageStatus.AUTO,
             created_at=today,
             updated_at=today,
@@ -308,7 +336,7 @@ class WikiCompiler:
         )
 
         lines = [
-            f"# {entity.canonical_name}",
+            f"# {clean_name}",
             "",
             f"**Type:** {entity.entity_type.value}  ",
         ]
@@ -359,11 +387,12 @@ class WikiCompiler:
         related_entities: list[EntityRecord],
     ) -> tuple[Frontmatter, str, Path]:
         """Compile a concept page."""
+        clean_name = _clean_title(concept_name)
         today = date.today()
         fm = Frontmatter(
             id=f"concept.{_slug(concept_name)}",
             type=PageType.CONCEPT,
-            title=concept_name,
+            title=clean_name,
             status=PageStatus.AUTO,
             created_at=today,
             updated_at=today,
@@ -374,11 +403,11 @@ class WikiCompiler:
         )
 
         lines = [
-            f"# {concept_name}",
+            f"# {clean_name}",
             "",
             "## Definition",
             "",
-            f"*{concept_name}* is a concept encountered in the document corpus.",
+            f"*{clean_name}* is a concept encountered in the document corpus.",
             "",
         ]
 
@@ -414,11 +443,12 @@ class WikiCompiler:
         description: str = "",
         source_ids: list[str] | None = None,
     ) -> tuple[Frontmatter, str, Path]:
+        clean_name = _clean_title(failure_name)
         today = date.today()
         fm = Frontmatter(
             id=f"failure.{_slug(failure_name)}",
             type=PageType.FAILURE,
-            title=failure_name,
+            title=clean_name,
             status=PageStatus.AUTO,
             created_at=today,
             updated_at=today,
@@ -426,7 +456,7 @@ class WikiCompiler:
             review_status=ReviewStatus.PENDING,
         )
         lines = [
-            f"# Failure: {failure_name}",
+            f"# Failure: {clean_name}",
             "",
             f"**Description:** {description or 'N/A'}",
             "",
@@ -452,11 +482,12 @@ class WikiCompiler:
         differences: list[str],
         source_ids: list[str] | None = None,
     ) -> tuple[Frontmatter, str, Path]:
+        clean_title = _clean_title(title)
         today = date.today()
         fm = Frontmatter(
             id=f"comparison.{_slug(title)}",
             type=PageType.COMPARISON,
-            title=title,
+            title=clean_title,
             status=PageStatus.AUTO,
             created_at=today,
             updated_at=today,
@@ -464,7 +495,7 @@ class WikiCompiler:
             review_status=ReviewStatus.PENDING,
         )
         lines = [
-            f"# Comparison: {title}",
+            f"# Comparison: {clean_title}",
             "",
             f"**Objects:** {', '.join(objects)}",
             "",
@@ -490,11 +521,12 @@ class WikiCompiler:
         alternatives: list[str] | None = None,
         source_ids: list[str] | None = None,
     ) -> tuple[Frontmatter, str, Path]:
+        clean_statement = _clean_title(statement)
         today = date.today()
         fm = Frontmatter(
             id=f"decision.{_slug(statement)}",
             type=PageType.DECISION,
-            title=statement,
+            title=clean_statement,
             status=PageStatus.AUTO,
             created_at=today,
             updated_at=today,
@@ -502,7 +534,7 @@ class WikiCompiler:
             review_status=ReviewStatus.PENDING,
         )
         lines = [
-            f"# Decision: {statement}",
+            f"# Decision: {clean_statement}",
             "",
             f"**Context:** {context}",
             "",
@@ -526,18 +558,19 @@ class WikiCompiler:
         source_ids: list[str] | None = None,
     ) -> tuple[Frontmatter, str, Path]:
         """Compile a parser info page."""
+        clean_parser = _clean_title(parser_name)
         today = date.today()
         fm = Frontmatter(
             id=f"parser-{_slug(parser_name)}",
             type=PageType.PARSER,
-            title=f"Parser: {parser_name}",
+            title=f"Parser: {clean_parser}",
             created_at=today,
             updated_at=today,
             source_docs=source_ids or [],
             review_status=ReviewStatus.NOT_NEEDED,
         )
         lines = [
-            f"# Parser: {parser_name}",
+            f"# Parser: {clean_parser}",
             "",
             f"**Version:** {content.parser_version}",
             "",
@@ -568,18 +601,19 @@ class WikiCompiler:
         source_ids: list[str] | None = None,
     ) -> tuple[Frontmatter, str, Path]:
         """Compile a benchmark page."""
+        clean_benchmark = _clean_title(benchmark_name)
         today = date.today()
         fm = Frontmatter(
             id=f"benchmark-{_slug(benchmark_name)}",
             type=PageType.BENCHMARK,
-            title=f"Benchmark: {benchmark_name}",
+            title=f"Benchmark: {clean_benchmark}",
             created_at=today,
             updated_at=today,
             source_docs=source_ids or [],
             review_status=ReviewStatus.NOT_NEEDED,
         )
         lines = [
-            f"# Benchmark: {benchmark_name}",
+            f"# Benchmark: {clean_benchmark}",
             "",
             f"**Dataset:** {content.dataset_description}",
             "",

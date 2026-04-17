@@ -134,6 +134,8 @@ class RunManifest(BaseModel):
     compiled_created_count: int = Field(default=0, description="Number of newly created pages")
     compiled_updated_count: int = Field(default=0, description="Number of updated pages")
     compiled_deleted_count: int = Field(default=0, description="Number of pages marked for deletion")
+    dropped_empty_slug_count: int = Field(default=0, description="Number of candidates dropped due to empty slug/filename")
+    dropped_unreadable_title_count: int = Field(default=0, description="Number of entity/concept candidates dropped due to unreadable title")
 
     # Manual override audit fields (US-026)
     override_reviewer: str | None = Field(default=None, description="Identity of the reviewer who overrode the gate")
