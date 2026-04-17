@@ -39,7 +39,7 @@ from docos.pipeline.signal_extractor import SignalExtractor
 from docos.registry import SourceRegistry
 from docos.run_store import RunStore
 from docos.source_store import RawStorage
-from docos.wiki.compiler import WikiCompiler
+from docos.wiki.compiler import WikiCompiler, _is_valid_page_path
 
 logger = logging.getLogger(__name__)
 
@@ -472,33 +472,40 @@ class PipelineRunner:
 
             patches: list[Patch] = []
             page_types: list[str] = []
+            _dropped_empty_slug: int = 0
 
             # --- Unified page loop ---
             # 1. Source page
             fm, body, page_path = compiler.compile_source_page(source, docir, entities, claims)
-            compiled = CompiledPage(
-                frontmatter=fm,
-                body=body,
-                page_path=page_path,
-                run_id=manifest.run_id,
-            )
-            patch = compiled.compute_patch(
-                run_id=manifest.run_id,
-                source_id=source.source_id,
-            )
-            if patch is not None:
-                patches.append(patch)
-            page_types.append("source")
-            self._wiki_store.save(WikiPageState(
-                page_path=str(page_path),
-                run_id=manifest.run_id,
-                frontmatter=fm.model_dump(),
-                body=body,
-            ))
+            if not _is_valid_page_path(page_path):
+                _dropped_empty_slug += 1
+            else:
+                compiled = CompiledPage(
+                    frontmatter=fm,
+                    body=body,
+                    page_path=page_path,
+                    run_id=manifest.run_id,
+                )
+                patch = compiled.compute_patch(
+                    run_id=manifest.run_id,
+                    source_id=source.source_id,
+                )
+                if patch is not None:
+                    patches.append(patch)
+                page_types.append("source")
+                self._wiki_store.save(WikiPageState(
+                    page_path=str(page_path),
+                    run_id=manifest.run_id,
+                    frontmatter=fm.model_dump(),
+                    body=body,
+                ))
 
             # 2. Entity pages
             for entity in entities:
                 efm, ebody, epath = compiler.compile_entity_page(entity, claims)
+                if not _is_valid_page_path(epath):
+                    _dropped_empty_slug += 1
+                    continue
                 ecompiled = CompiledPage(
                     frontmatter=efm,
                     body=ebody,
@@ -534,6 +541,9 @@ class PipelineRunner:
                     related_claims=related_claims,
                     related_entities=related_entities,
                 )
+                if not _is_valid_page_path(cpath):
+                    _dropped_empty_slug += 1
+                    continue
                 ccompiled = CompiledPage(
                     frontmatter=cfm,
                     body=cbody,
@@ -559,16 +569,18 @@ class PipelineRunner:
                 str(page_path),  # source
             }
             for entity in entities:
-                efm2, _, epath2 = compiler.compile_entity_page(entity, [])
-                current_paths.add(str(epath2))
+                _, _, epath2 = compiler.compile_entity_page(entity, [])
+                if _is_valid_page_path(epath2):
+                    current_paths.add(str(epath2))
             for concept_name in concept_names:
-                cfm2, _, cpath2 = compiler.compile_concept_page(
+                _, _, cpath2 = compiler.compile_concept_page(
                     concept_name=concept_name,
                     source_ids=[],
                     related_claims=[],
                     related_entities=[],
                 )
-                current_paths.add(str(cpath2))
+                if _is_valid_page_path(cpath2):
+                    current_paths.add(str(cpath2))
 
             prior_paths = set(self._wiki_store.list_page_paths())
             stale_entity_concept_paths = {
@@ -595,6 +607,7 @@ class PipelineRunner:
             manifest.compiled_created_count = len([t for t in page_types if t != "delete"])
             manifest.compiled_updated_count = 0  # Updated pages tracked via patch change types
             manifest.compiled_deleted_count = page_types.count("delete")
+            manifest.dropped_empty_slug_count = _dropped_empty_slug
 
             manifest.mark_stage("compile", StageStatus.COMPLETED)
             self._run_store.update(manifest)

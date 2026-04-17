@@ -131,9 +131,15 @@ def _render_markdown(frontmatter: dict[str, Any], body: str) -> str:
     return f"---\n{yaml_block}\n---\n\n{body.rstrip()}\n"
 
 
-def _export_wiki_pages(workspace: Path, wiki_root: Path) -> list[str]:
+def _export_wiki_pages(workspace: Path, wiki_root: Path) -> dict[str, Any]:
+    """Export wiki pages, rejecting empty-slug filenames.
+
+    Returns a dict with ``exported`` (list of written paths) and
+    ``filtered_empty_slug`` (count of pages blocked due to empty slug).
+    """
     wiki_store = WikiStore(workspace / "wiki_state")
     exported: list[str] = []
+    filtered_empty_slug = 0
 
     for page_path in sorted(wiki_store.list_page_paths()):
         state = wiki_store.get(page_path)
@@ -146,6 +152,13 @@ def _export_wiki_pages(workspace: Path, wiki_root: Path) -> list[str]:
         except ValueError:
             relative_path = Path(compiled_path.name)
 
+        # Reject empty-slug / empty-filename pages before writing.
+        fname = relative_path.name
+        slug_part = fname[:-3] if fname.endswith(".md") else fname
+        if not slug_part.strip():
+            filtered_empty_slug += 1
+            continue
+
         dest_path = wiki_root / relative_path
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         dest_path.write_text(
@@ -154,7 +167,7 @@ def _export_wiki_pages(workspace: Path, wiki_root: Path) -> list[str]:
         )
         exported.append(str(dest_path))
 
-    return exported
+    return {"exported": exported, "filtered_empty_slug": filtered_empty_slug}
 
 
 def _classify_verdict(item: dict[str, Any]) -> str:
@@ -488,6 +501,7 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Pending review: **{totals['pending_review_count']}**",
         f"- Knowledge sparse: **{totals['knowledge_sparse_count']}**",
         f"- Wiki sparse: **{totals['wiki_sparse_count']}**",
+        f"- Dropped empty slug: **{totals.get('dropped_empty_slug_count', 0)}**",
         "",
         "## Quality Metrics",
         "",
@@ -588,7 +602,9 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             manifest = _load_manifest(workspace, pipeline_result.run_id or None)
 
             wiki_root = outdir / "wiki_pages" / paper_label
-            wiki_pages = _export_wiki_pages(workspace, wiki_root)
+            _export_result = _export_wiki_pages(workspace, wiki_root)
+            wiki_pages = _export_result["exported"]
+            _export_filtered = _export_result["filtered_empty_slug"]
 
             file_result = _build_file_result(
                 index=index,
@@ -599,6 +615,10 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
                 wiki_root=wiki_root,
                 wiki_pages=wiki_pages,
             )
+
+            # US-013: Surface empty-slug rejection counts (compile + export)
+            _manifest_dropped = getattr(manifest, "dropped_empty_slug_count", 0) or 0
+            file_result["dropped_empty_slug_count"] = _manifest_dropped + _export_filtered
             print(
                 f"  -> {file_result['status']}"
                 f" (run_id={file_result['run_id'] or '-'}, failed_stage={file_result['failed_stage'] or '-'})",
@@ -639,6 +659,7 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     pending_review_count = sum(1 for item in results if item.get("review_status") == "pending")
     knowledge_sparse_count = sum(1 for item in results if item.get("knowledge_sparse"))
     wiki_sparse_count = sum(1 for item in results if item.get("wiki_sparse"))
+    dropped_empty_slug_total = sum(item.get("dropped_empty_slug_count", 0) for item in results)
 
     # US-009: Aggregate quality metrics
     gate_evaluated = [item for item in results if item.get("gate", {}).get("passed") is not None]
@@ -697,6 +718,8 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "selected_paper_count": matched_count,
             "downloaded_paper_count": matched_count,
             "verified_paper_count": len(results),
+            # US-013: Empty-slug rejections (compile + export)
+            "dropped_empty_slug_count": dropped_empty_slug_total,
         },
         "failure_stage_histogram": _failure_stage_histogram(results),
         "verdict": _build_verdict(
