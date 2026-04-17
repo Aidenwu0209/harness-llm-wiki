@@ -1,5 +1,5 @@
 ## Codebase Patterns
-- This repository is Python-first; use `python -m mypy docos/` for type checking and `python -m pytest tests/ -q` for automated verification.
+- This repository is Python-first; use `python -m mypy docos/` for type checking and `python -m pytest tests/ -q` for automated verification. Use `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple` for network-reliable installs.
 - Batch verification entrypoints live in `scripts/quick_verify_papers.py` and `scripts/download_and_verify_papers.py`.
 - Pipeline quality signals already flow through `docos/pipeline/runner.py`, `docos/run_store.py`, `docos/artifact_stores.py`, `docos/review/queue.py`, and `docos/wiki/compiler.py`; prefer reusing those artifacts instead of inventing parallel state.
 - Focus test coverage on small targeted files under `tests/` and reuse fixture helpers from `tests/fixtures/build_fixtures.py` when batch or parser fixtures are needed.
@@ -17,5 +17,15 @@
 - **未来迭代的学习：**
   - Verdict tier is computed post-construction via `_classify_verdict(item)` called on each result dict
   - The `_build_verdict` top-level function still uses old success_count/wiki_count logic — that is US-007's scope to rewrite
-  - `mypy` is not installed in the current environment; typecheck AC is satisfied via manual type annotations
+  - `mypy` is now installed in conda env via Tsinghua mirror (`pip install mypy -i https://pypi.tuna.tsinghua.edu.cn/simple`); use this mirror for all future pip installs in China network
+---
+
+## 2026-04-18 00:51 - US-001 (fix)
+- Fixed US-001 validation failure: installed mypy into conda environment using Tsinghua PyPI mirror
+- All 6 ACs now pass: mypy (Success: no issues found in 45 source files), pytest (1039 passed), functional verdict tiers verified
+- No code changes needed — the original US-001 implementation was correct; only the environment was missing mypy
+- **Changed files:** `scripts/ralph/prd.json` (passes: true)
+- **未来迭代的学习：**
+  - Use `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple` for reliable package installs in China network
+  - `python -m mypy docos/` is the canonical typecheck command (not `mypy docos/`)
 ---
