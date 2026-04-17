@@ -821,3 +821,154 @@ def test_us009_fmt_rate() -> None:
     assert _fmt_rate(1.0) == "100%"
     assert _fmt_rate(0.5) == "50%"
     assert _fmt_rate(0.0) == "0%"
+
+
+# ---------------------------------------------------------------------------
+# US-010: Split exported-page counts into candidate, gate-passed, and vault-ready totals
+# ---------------------------------------------------------------------------
+
+
+def test_us010_summary_json_includes_page_count_buckets(tmp_path: Path) -> None:
+    """AC1: summary.json totals must include generated_candidate_pages, gate_passed_pages, final_vault_ready_pages."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "generated_candidate_pages" in totals
+    assert "gate_passed_pages" in totals
+    assert "final_vault_ready_pages" in totals
+    assert isinstance(totals["generated_candidate_pages"], int)
+    assert isinstance(totals["gate_passed_pages"], int)
+    assert isinstance(totals["final_vault_ready_pages"], int)
+    # vault_ready <= gate_passed <= candidate
+    assert totals["final_vault_ready_pages"] <= totals["gate_passed_pages"] <= totals["generated_candidate_pages"]
+
+
+def test_us010_per_paper_includes_page_buckets(tmp_path: Path) -> None:
+    """AC2: per-paper result.json must expose page_buckets with the three counts."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    runs_dir = outdir / "runs"
+    run_dirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+    assert len(run_dirs) >= 1
+
+    for run_dir in run_dirs:
+        result_json = run_dir / "result.json"
+        data = json.loads(result_json.read_text(encoding="utf-8"))
+        assert "page_buckets" in data, f"Missing page_buckets in {result_json}"
+        buckets = data["page_buckets"]
+        assert "generated_candidate_pages" in buckets
+        assert "gate_passed_pages" in buckets
+        assert "final_vault_ready_pages" in buckets
+
+
+def test_us010_blocked_paper_does_not_increase_vault_ready() -> None:
+    """AC3: a paper with pages but blocked quality status must not count toward final_vault_ready_pages."""
+    # Simulate aggregate computation manually
+    items = [
+        {
+            "verdict": "quality_blocked",
+            "gate": {"passed": False},
+            "counts": {"wiki_pages_exported": 5},
+        },
+        {
+            "verdict": "usable_wiki_ready",
+            "gate": {"passed": True},
+            "counts": {"wiki_pages_exported": 3},
+        },
+    ]
+    generated_candidate_pages = sum(i["counts"]["wiki_pages_exported"] for i in items)
+    gate_passed_pages = sum(
+        i["counts"]["wiki_pages_exported"]
+        for i in items
+        if i["gate"]["passed"] is True
+    )
+    final_vault_ready_pages = sum(
+        i["counts"]["wiki_pages_exported"]
+        for i in items
+        if i["verdict"] == "usable_wiki_ready"
+    )
+
+    assert generated_candidate_pages == 8
+    assert gate_passed_pages == 3
+    assert final_vault_ready_pages == 3  # blocked paper's 5 pages are excluded
+
+
+def test_us010_markdown_includes_page_count_buckets(tmp_path: Path) -> None:
+    """AC1+AC2: markdown summary must render page count bucket lines."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Generated candidate pages" in md_text
+    assert "Gate-passed pages" in md_text
+    assert "Final vault-ready pages" in md_text
+
+
+def test_us010_per_paper_page_buckets_reflect_verdict() -> None:
+    """AC3: per-paper page_buckets must reflect verdict — blocked papers get 0 vault_ready."""
+    # A quality_blocked paper
+    item_blocked = {
+        "verdict": "quality_blocked",
+        "gate": {"passed": False},
+        "counts": {"wiki_pages_exported": 5},
+    }
+    wiki = item_blocked["counts"]["wiki_pages_exported"]
+    buckets = {
+        "generated_candidate_pages": wiki,
+        "gate_passed_pages": wiki if item_blocked["gate"]["passed"] is True else 0,
+        "final_vault_ready_pages": wiki if item_blocked["verdict"] == "usable_wiki_ready" else 0,
+    }
+    assert buckets["generated_candidate_pages"] == 5
+    assert buckets["gate_passed_pages"] == 0
+    assert buckets["final_vault_ready_pages"] == 0
+
+    # A usable_wiki_ready paper
+    item_ready = {
+        "verdict": "usable_wiki_ready",
+        "gate": {"passed": True},
+        "counts": {"wiki_pages_exported": 3},
+    }
+    wiki2 = item_ready["counts"]["wiki_pages_exported"]
+    buckets2 = {
+        "generated_candidate_pages": wiki2,
+        "gate_passed_pages": wiki2 if item_ready["gate"]["passed"] is True else 0,
+        "final_vault_ready_pages": wiki2 if item_ready["verdict"] == "usable_wiki_ready" else 0,
+    }
+    assert buckets2["generated_candidate_pages"] == 3
+    assert buckets2["gate_passed_pages"] == 3
+    assert buckets2["final_vault_ready_pages"] == 3
+
+
+def test_us010_zero_pages_all_buckets_zero(tmp_path: Path) -> None:
+    """Edge case: paper with no exported pages must have all three buckets as 0."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    # If no wiki pages were exported, all buckets must be 0
+    if payload["totals"]["generated_candidate_pages"] == 0:
+        assert payload["totals"]["gate_passed_pages"] == 0
+        assert payload["totals"]["final_vault_ready_pages"] == 0

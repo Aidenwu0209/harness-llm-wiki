@@ -476,6 +476,9 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Successful full-chain runs: **{totals['success_count']} / {totals['pdfs_processed']}**",
         f"- Failed runs: **{totals['failed_count']}**",
         f"- Runs with exported wiki pages: **{totals['wiki_output_count']}**",
+        f"- Generated candidate pages: **{totals['generated_candidate_pages']}**",
+        f"- Gate-passed pages: **{totals['gate_passed_pages']}**",
+        f"- Final vault-ready pages: **{totals['final_vault_ready_pages']}**",
         "",
         "## Verdict Tiers",
         "",
@@ -613,6 +616,14 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
         file_result["knowledge_sparse"] = _is_knowledge_sparse(file_result)
         file_result["wiki_sparse"] = _is_wiki_sparse(file_result)
 
+        # US-010: Per-paper page-count buckets
+        _wiki_count = file_result["counts"]["wiki_pages_exported"]
+        file_result["page_buckets"] = {
+            "generated_candidate_pages": _wiki_count,
+            "gate_passed_pages": _wiki_count if file_result.get("gate", {}).get("passed") is True else 0,
+            "final_vault_ready_pages": _wiki_count if file_result.get("verdict") == "usable_wiki_ready" else 0,
+        }
+
         (run_root / "result.json").write_text(
             json.dumps(file_result, indent=2, ensure_ascii=False),
             encoding="utf-8",
@@ -638,6 +649,17 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     verdict_counts = Counter(item["verdict"] for item in results)
+
+    # US-010: Page-count buckets by quality stage
+    generated_candidate_pages = sum(
+        item["page_buckets"]["generated_candidate_pages"] for item in results
+    )
+    gate_passed_pages = sum(
+        item["page_buckets"]["gate_passed_pages"] for item in results
+    )
+    final_vault_ready_pages = sum(
+        item["page_buckets"]["final_vault_ready_pages"] for item in results
+    )
 
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -666,6 +688,10 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             # US-009: Aggregate quality metrics
             "gate_pass_rate": gate_pass_rate,
             "lint_blocker_count": lint_blocker_count,
+            # US-010: Page-count buckets by quality stage
+            "generated_candidate_pages": generated_candidate_pages,
+            "gate_passed_pages": gate_passed_pages,
+            "final_vault_ready_pages": final_vault_ready_pages,
             # Explicit coverage counters (US-006)
             "manifest_total": discovered_count,
             "selected_paper_count": matched_count,
