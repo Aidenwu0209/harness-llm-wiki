@@ -152,6 +152,7 @@ def test_quick_verify_per_file_result_json_includes_verdict(tmp_path: Path) -> N
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.quick_verify_papers import _build_verdict  # noqa: E402
 from scripts.quick_verify_papers import _classify_verdict  # noqa: E402
+from scripts.quick_verify_papers import _fmt_rate  # noqa: E402
 from scripts.quick_verify_papers import _is_knowledge_sparse  # noqa: E402
 from scripts.quick_verify_papers import _is_wiki_sparse  # noqa: E402
 
@@ -729,3 +730,94 @@ def test_us008_per_paper_result_json_has_all_three_signals(tmp_path: Path) -> No
         assert "decision" in data["gate"]
         assert "review_status" in data
         assert "verdict" in data
+
+
+# ---------------------------------------------------------------------------
+# US-009: Add aggregate gate, review, and lint quality metrics to quick verify
+# ---------------------------------------------------------------------------
+
+
+def test_us009_summary_json_includes_quality_metrics(tmp_path: Path) -> None:
+    """AC1+AC2: summary.json totals must include gate_pass_rate, pending_review_count, and lint_blocker_count."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "gate_pass_rate" in totals, "Missing gate_pass_rate in totals"
+    assert "pending_review_count" in totals, "Missing pending_review_count in totals"
+    assert "lint_blocker_count" in totals, "Missing lint_blocker_count in totals"
+    # gate_pass_rate is either None or a float between 0 and 1
+    if totals["gate_pass_rate"] is not None:
+        assert 0.0 <= totals["gate_pass_rate"] <= 1.0
+    assert isinstance(totals["lint_blocker_count"], int)
+    assert isinstance(totals["pending_review_count"], int)
+
+
+def test_us009_markdown_includes_quality_metrics_section(tmp_path: Path) -> None:
+    """AC3: markdown summary must render Quality Metrics section with gate pass rate, pending review, and lint blockers."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Quality Metrics" in md_text, "Missing Quality Metrics section in markdown"
+    assert "Gate pass rate" in md_text, "Missing Gate pass rate in markdown"
+    assert "Pending review" in md_text, "Missing Pending review in Quality Metrics"
+    assert "Lint blockers" in md_text, "Missing Lint blockers in markdown"
+
+
+def test_us009_gate_pass_rate_computation() -> None:
+    """AC1: gate_pass_rate computed correctly from results with gate.passed values."""
+    # Simulate the computation inline to verify the logic
+    results = [
+        {"gate": {"passed": True}, "counts": {"lint_findings": 0}},
+        {"gate": {"passed": False}, "counts": {"lint_findings": 5}},
+        {"gate": {"passed": True}, "counts": {"lint_findings": 0}},
+    ]
+    gate_evaluated = [r for r in results if r.get("gate", {}).get("passed") is not None]
+    gate_passed_count = sum(1 for r in gate_evaluated if r["gate"]["passed"] is True)
+    rate = round(gate_passed_count / len(gate_evaluated), 4)
+    assert abs(rate - 2 / 3) < 0.001
+    lint_blocker_count = sum(1 for r in results if r.get("counts", {}).get("lint_findings", 0) > 0)
+    assert lint_blocker_count == 1
+
+
+def test_us009_gate_pass_rate_none_when_no_gate_evaluated() -> None:
+    """AC1: gate_pass_rate is None when no papers reached the gate stage."""
+    results = [
+        {"gate": {"passed": None}, "counts": {"lint_findings": 0}},
+        {"gate": {"passed": None}, "counts": {"lint_findings": 0}},
+    ]
+    gate_evaluated = [r for r in results if r.get("gate", {}).get("passed") is not None]
+    rate = round(sum(1 for r in gate_evaluated if r["gate"]["passed"] is True) / len(gate_evaluated), 4) if gate_evaluated else None
+    assert rate is None
+
+
+def test_us009_lint_blocker_count_includes_papers_with_findings() -> None:
+    """AC1: lint_blocker_count counts papers with any lint findings."""
+    results = [
+        {"counts": {"lint_findings": 0}},
+        {"counts": {"lint_findings": 28}},
+        {"counts": {"lint_findings": 3}},
+        {"counts": {"lint_findings": 0}},
+    ]
+    count = sum(1 for r in results if r.get("counts", {}).get("lint_findings", 0) > 0)
+    assert count == 2
+
+
+def test_us009_fmt_rate() -> None:
+    """Helper _fmt_rate formats correctly."""
+    assert _fmt_rate(None) == "N/A"
+    assert _fmt_rate(1.0) == "100%"
+    assert _fmt_rate(0.5) == "50%"
+    assert _fmt_rate(0.0) == "0%"

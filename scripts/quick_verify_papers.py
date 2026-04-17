@@ -437,6 +437,13 @@ def _failure_stage_histogram(results: list[dict[str, Any]]) -> dict[str, int]:
     return dict(sorted(counter.items()))
 
 
+def _fmt_rate(rate: float | None) -> str:
+    """Format a gate pass rate for human-readable output."""
+    if rate is None:
+        return "N/A"
+    return f"{rate:.0%}"
+
+
 def _write_summary_json(outdir: Path, payload: dict[str, Any]) -> Path:
     summary_path = outdir / "summary.json"
     summary_path.write_text(
@@ -478,6 +485,12 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Pending review: **{totals['pending_review_count']}**",
         f"- Knowledge sparse: **{totals['knowledge_sparse_count']}**",
         f"- Wiki sparse: **{totals['wiki_sparse_count']}**",
+        "",
+        "## Quality Metrics",
+        "",
+        f"- Gate pass rate: **{_fmt_rate(totals['gate_pass_rate'])}**",
+        f"- Pending review: **{totals['pending_review_count']}**",
+        f"- Lint blockers: **{totals['lint_blocker_count']}**",
         "",
         "## Verdict",
         "",
@@ -616,6 +629,14 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     knowledge_sparse_count = sum(1 for item in results if item.get("knowledge_sparse"))
     wiki_sparse_count = sum(1 for item in results if item.get("wiki_sparse"))
 
+    # US-009: Aggregate quality metrics
+    gate_evaluated = [item for item in results if item.get("gate", {}).get("passed") is not None]
+    gate_passed_count = sum(1 for item in gate_evaluated if item["gate"]["passed"] is True)
+    gate_pass_rate = round(gate_passed_count / len(gate_evaluated), 4) if gate_evaluated else None
+    lint_blocker_count = sum(
+        1 for item in results if item.get("counts", {}).get("lint_findings", 0) > 0
+    )
+
     verdict_counts = Counter(item["verdict"] for item in results)
 
     payload = {
@@ -642,6 +663,9 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "pipeline_runnable_count": verdict_counts.get("pipeline_runnable", 0),
             "quality_blocked_count": verdict_counts.get("quality_blocked", 0),
             "usable_wiki_ready_count": verdict_counts.get("usable_wiki_ready", 0),
+            # US-009: Aggregate quality metrics
+            "gate_pass_rate": gate_pass_rate,
+            "lint_blocker_count": lint_blocker_count,
             # Explicit coverage counters (US-006)
             "manifest_total": discovered_count,
             "selected_paper_count": matched_count,
