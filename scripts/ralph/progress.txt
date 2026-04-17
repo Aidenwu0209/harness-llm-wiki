@@ -40,3 +40,16 @@
   - `_classify_verdict` is a pure function that can be imported directly in tests via `sys.path.insert(0, str(REPO_ROOT))` then `from scripts.quick_verify_papers import _classify_verdict`
   - `gate.passed` is `bool | None`; `None` means gate stage was never reached and should NOT be treated as blocked
 ---
+
+## 2026-04-18 01:07 - US-003
+- Verified `_classify_verdict()` already correctly classifies `review_status=pending` as `quality_blocked` (not `usable_wiki_ready`)
+- Added `pending_review_count` to batch summary totals (counts papers with `review_status == "pending"`)
+- Added "Pending review" line to markdown Verdict Tiers section
+- Added "Review Status" column to markdown per-paper table showing original `review_status` value
+- Added 4 targeted tests for US-003 ACs: pending not usable_wiki_ready, separate counter in summary, verdict+review_status together, markdown column
+- All ACs pass: mypy clean, 1048 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`
+- **未来迭代的学习：**
+  - `_classify_verdict()` handles both `gate_passed is False` and `review_status == "pending"` in one check — both map to `quality_blocked`
+  - `pending_review_count` is a separate counter from `quality_blocked_count`, allowing downstream consumers to see the breakdown
+---
