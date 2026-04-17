@@ -350,10 +350,30 @@ def _build_script_failure(
     }
 
 
-def _build_verdict(results: list[dict[str, Any]]) -> dict[str, str]:
+def _build_verdict(
+    results: list[dict[str, Any]],
+    *,
+    manifest_total: int = 0,
+    verified_paper_count: int = 0,
+) -> dict[str, str]:
+    """Build top-level headline and answer from verdict-tier totals.
+
+    The verdict is derived from the per-paper classification produced by
+    ``_classify_verdict`` rather than raw ``success_count`` / ``wiki_output_count``.
+    """
     total = len(results)
-    success_count = sum(1 for item in results if item["status"] == "success")
-    wiki_count = sum(1 for item in results if item["counts"]["wiki_pages_exported"] > 0)
+    verdict_counts = Counter(item.get("verdict", "pipeline_runnable") for item in results)
+    usable = verdict_counts.get("usable_wiki_ready", 0)
+    blocked = verdict_counts.get("quality_blocked", 0)
+    runnable = verdict_counts.get("pipeline_runnable", 0)
+
+    # Coverage limitation note
+    coverage_note = ""
+    if manifest_total > 0 and verified_paper_count < manifest_total:
+        coverage_note = (
+            f"（本次验证覆盖 {verified_paper_count}/{manifest_total} 篇论文，"
+            "结论仅限于该样本范围）"
+        )
 
     if total == 0:
         return {
@@ -362,24 +382,50 @@ def _build_verdict(results: list[dict[str, Any]]) -> dict[str, str]:
             "answer": "这次没有实际跑任何论文，因此还不能回答系统是否具备一键转 wiki 能力。",
         }
 
-    if success_count == total and wiki_count == total:
+    if usable == total and blocked == 0:
+        headline = "当前系统已经基本具备一键批量转 wiki 的能力"
+        answer = (
+            f"这次验证中，所有 {total} 篇论文均通过质量门禁并导出了可用 wiki 页面。"
+            f"{coverage_note}"
+        )
         return {
             "status": "basically_yes",
-            "headline": "当前系统已经基本具备一键批量转 wiki 的能力",
-            "answer": "这次 smoke test 中，所有选中的论文都跑完整链路并导出了 wiki 页面。",
+            "headline": headline,
+            "answer": answer.rstrip(),
         }
 
-    if success_count > 0 and wiki_count > 0:
+    if usable > 0 and (blocked > 0 or runnable > 0):
+        headline = "当前系统已经部分具备一键批量转 wiki 的能力"
+        answer = (
+            f"这次验证中，{usable}/{total} 篇论文达到可用 wiki 标准，"
+            f"{blocked} 篇被质量门禁或审核阻断，"
+            f"{runnable} 篇未达到可用标准。"
+            f"{coverage_note}"
+        )
         return {
             "status": "partial_yes",
-            "headline": "当前系统已经部分具备一键批量转 wiki 的能力",
-            "answer": "这次 smoke test 证明链路可以处理一部分论文并产出 wiki，但还不能稳定覆盖整批输入。",
+            "headline": headline,
+            "answer": answer.rstrip(),
+        }
+
+    if blocked > 0 and usable == 0:
+        return {
+            "status": "quality_blocked",
+            "headline": "当前系统在本次验证中存在质量阻断，尚不具备可用 wiki 交付能力",
+            "answer": (
+                f"这次验证中，{blocked} 篇论文被质量门禁或审核流程阻断，"
+                f"没有论文达到可用 wiki 标准。"
+                f"{coverage_note}"
+            ).rstrip(),
         }
 
     return {
         "status": "not_yet",
         "headline": "当前系统还不具备稳定的一键批量转 wiki 能力",
-        "answer": "这次 smoke test 中，没有形成足够稳定的成功链路或 wiki 输出。",
+        "answer": (
+            f"这次验证中，没有论文达到可用 wiki 标准。"
+            f"{coverage_note}"
+        ).rstrip(),
     }
 
 
@@ -600,7 +646,11 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "verified_paper_count": len(results),
         },
         "failure_stage_histogram": _failure_stage_histogram(results),
-        "verdict": _build_verdict(results),
+        "verdict": _build_verdict(
+            results,
+            manifest_total=discovered_count,
+            verified_paper_count=len(results),
+        ),
         "files": results,
     }
 

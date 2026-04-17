@@ -150,6 +150,7 @@ def test_quick_verify_per_file_result_json_includes_verdict(tmp_path: Path) -> N
 
 # Import the pure classification function for direct unit testing.
 sys.path.insert(0, str(REPO_ROOT))
+from scripts.quick_verify_papers import _build_verdict  # noqa: E402
 from scripts.quick_verify_papers import _classify_verdict  # noqa: E402
 from scripts.quick_verify_papers import _is_knowledge_sparse  # noqa: E402
 from scripts.quick_verify_papers import _is_wiki_sparse  # noqa: E402
@@ -562,3 +563,69 @@ def test_us006_partial_batch_shows_subset_coverage(tmp_path: Path) -> None:
     md_text = (outdir / "summary.md").read_text(encoding="utf-8")
     assert "Manifest total: **3**" in md_text
     assert "Selected for this run: **1**" in md_text
+
+
+# ---------------------------------------------------------------------------
+# US-007: Rewrite quick-verify headline and answer from quality-aware totals
+# ---------------------------------------------------------------------------
+
+
+def test_us007_verdict_uses_verdict_tier_totals() -> None:
+    """AC1: headline and answer derived from verdict-tier totals, not raw success_count."""
+    # All papers usable_wiki_ready
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 5}},
+    ]
+    v = _build_verdict(results)
+    assert v["status"] == "basically_yes"
+    assert "可用 wiki" in v["headline"] or "wiki" in v["headline"].lower()
+
+
+def test_us007_blocked_papers_no_fully_ready_headline() -> None:
+    """AC3: blocked papers must not produce a headline claiming fully ready wiki delivery."""
+    results = [
+        {"verdict": "quality_blocked", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 5}},
+    ]
+    v = _build_verdict(results)
+    assert v["status"] != "basically_yes"
+    # Must be partial or blocked, not "basically_yes"
+    assert v["status"] in ("partial_yes", "quality_blocked")
+
+
+def test_us007_partial_coverage_mentions_sample_limitation() -> None:
+    """AC2: partial coverage must explicitly say the conclusion is limited to the sample."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results, manifest_total=10, verified_paper_count=1)
+    assert "1/10" in v["answer"]
+    assert "样本" in v["answer"] or "范围" in v["answer"]
+
+
+def test_us007_all_quality_blocked_not_usable() -> None:
+    """AC3: all quality_blocked must not produce usable-wiki headline."""
+    results = [
+        {"verdict": "quality_blocked", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "quality_blocked", "status": "success", "counts": {"wiki_pages_exported": 0}},
+    ]
+    v = _build_verdict(results)
+    assert v["status"] == "quality_blocked"
+    assert "质量阻断" in v["headline"] or "阻断" in v["headline"]
+
+
+def test_us007_no_results_gives_no_input() -> None:
+    """Edge case: no results must produce no_input status."""
+    v = _build_verdict([])
+    assert v["status"] == "no_input"
+
+
+def test_us007_full_coverage_no_sample_warning() -> None:
+    """When verified == manifest_total, no coverage limitation note is emitted."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results, manifest_total=1, verified_paper_count=1)
+    assert v["status"] == "basically_yes"
+    assert "样本" not in v["answer"]
