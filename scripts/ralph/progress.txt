@@ -53,3 +53,30 @@
   - `_classify_verdict()` handles both `gate_passed is False` and `review_status == "pending"` in one check — both map to `quality_blocked`
   - `pending_review_count` is a separate counter from `quality_blocked_count`, allowing downstream consumers to see the breakdown
 ---
+## 2026-04-18 01:14 - US-004
+- Added `_is_knowledge_sparse()` helper that checks `entities=0, claims=0, relations=0`
+- Added `knowledge_sparse` boolean field to per-paper results (computed alongside `verdict`)
+- Added `knowledge_sparse_count` to batch summary totals in `summary.json`
+- Added "Knowledge sparse" line to markdown Verdict Tiers section
+- Added 6 tests: all-zero → True, non-zero entities → False, counter in summary, coexists with verdict, per-paper result.json field, markdown line
+- All ACs pass: mypy clean, 1054 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`
+- **未来迭代的学习：**
+  - `_is_knowledge_sparse()` is a pure function like `_classify_verdict()`, computed post-construction on the result dict
+  - Both `verdict` and `knowledge_sparse` are added to `file_result` in the same post-processing block in `run_batch()`, making it easy to add more signals later
+  - Knowledge-sparse is independent of the verdict tier — a paper can be `usable_wiki_ready` AND `knowledge_sparse` if it exported wiki pages but had zero knowledge extraction (edge case from old pipeline runs)
+---
+
+## 2026-04-18 01:22 - US-005
+- Added `_is_wiki_sparse()` helper that checks exported wiki page paths for entity/concept directory components
+- Added `wiki_sparse` boolean field to per-paper results (computed alongside `verdict` and `knowledge_sparse`)
+- Added `wiki_sparse_count` to batch summary totals in `summary.json`
+- Added "Wiki sparse" line to markdown Verdict Tiers section
+- Added 7 tests: source-only → True, entity pages → False, concept pages → False, no pages → False, counter in summary, per-paper result.json field, markdown line
+- All ACs pass: mypy clean, 1061 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`
+- **未来迭代的学习：**
+  - Wiki page types are determined by directory components: `sources/`, `entities/`, `concepts/` — checked via `Path(page_path).parts`
+  - `_is_wiki_sparse()` returns False when no pages exist (signal only meaningful when pages are exported)
+  - The three post-processing signals (`verdict`, `knowledge_sparse`, `wiki_sparse`) are all computed in the same block in `run_batch()`, making it easy to add more signals
+---
