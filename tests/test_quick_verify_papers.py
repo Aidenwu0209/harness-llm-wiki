@@ -142,3 +142,85 @@ def test_quick_verify_per_file_result_json_includes_verdict(tmp_path: Path) -> N
         data = json.loads(result_json.read_text(encoding="utf-8"))
         assert "verdict" in data, f"Missing verdict in {result_json}"
         assert data["verdict"] in _VALID_VERDICTS
+
+
+# ---------------------------------------------------------------------------
+# US-002: Classify gate-blocked runs as quality-blocked outcomes
+# ---------------------------------------------------------------------------
+
+# Import the pure classification function for direct unit testing.
+sys.path.insert(0, str(REPO_ROOT))
+from scripts.quick_verify_papers import _classify_verdict  # noqa: E402
+
+
+def test_us002_gate_passed_false_classified_as_quality_blocked() -> None:
+    """AC1: gate.passed=false must yield quality_blocked verdict."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": False, "decision": "blocked", "reasons": ["quality_score_below_threshold"]},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 3},
+    }
+    assert _classify_verdict(item) == "quality_blocked"
+
+
+def test_us002_gate_blocked_even_with_exported_wiki_pages() -> None:
+    """AC1: gate-blocked papers remain quality_blocked even when wiki pages exist."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": False, "decision": "blocked", "reasons": []},
+        "review_status": "approved",
+        "counts": {"wiki_pages_exported": 10},
+    }
+    assert _classify_verdict(item) == "quality_blocked"
+
+
+def test_us002_gate_blocked_excluded_from_usable_wiki_ready_tally() -> None:
+    """AC2: usable_wiki_ready_count must not include gate-blocked papers."""
+    from collections import Counter
+
+    items = [
+        # This one should be usable_wiki_ready: gate passed, wiki exported
+        {"run_status": "completed", "gate": {"passed": True}, "review_status": None, "counts": {"wiki_pages_exported": 3}},
+        # These should be quality_blocked: gate failed
+        {"run_status": "completed", "gate": {"passed": False}, "review_status": None, "counts": {"wiki_pages_exported": 5}},
+        {"run_status": "completed", "gate": {"passed": False}, "review_status": "approved", "counts": {"wiki_pages_exported": 2}},
+    ]
+    for item in items:
+        item["verdict"] = _classify_verdict(item)
+
+    verdict_counts = Counter(item["verdict"] for item in items)
+    assert verdict_counts.get("usable_wiki_ready", 0) == 1
+    assert verdict_counts.get("quality_blocked", 0) == 2
+
+
+def test_us002_per_paper_payload_preserves_gate_info(tmp_path: Path) -> None:
+    """AC3: per-paper result preserves gate.decision and gate.reasons for blocked runs."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    for item in payload["files"]:
+        # gate section must always exist with passed, decision, reasons
+        assert "gate" in item, f"Missing gate section for {item['file_name']}"
+        gate = item["gate"]
+        assert "passed" in gate, f"Missing gate.passed for {item['file_name']}"
+        assert "decision" in gate, f"Missing gate.decision for {item['file_name']}"
+        assert "reasons" in gate, f"Missing gate.reasons for {item['file_name']}"
+
+
+def test_us002_gate_passed_none_not_treated_as_blocked() -> None:
+    """Edge case: gate.passed=None (gate never reached) should not be quality_blocked."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": None, "decision": None, "reasons": []},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 0},
+    }
+    # None means gate stage never reached — should be pipeline_runnable, not quality_blocked
+    assert _classify_verdict(item) == "pipeline_runnable"
