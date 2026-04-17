@@ -502,8 +502,8 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         [
             "## Per Paper",
             "",
-            "| # | File | Verdict | Review Status | Status | Failed Stage | Route | Wiki Pages | Run ID |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| # | File | Verdict | Gate | Review Status | Status | Failed Stage | Route | Wiki Pages | Run ID |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ],
     )
 
@@ -513,9 +513,12 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         run_id = item["run_id"] or "-"
         wiki_pages = item["counts"]["wiki_pages_exported"]
         verdict_tier = item.get("verdict", "-")
+        gate = item.get("gate", {})
+        gate_decision = gate.get("decision") if isinstance(gate, dict) else None
+        gate_display = gate_decision if gate_decision is not None else ("passed" if gate.get("passed") is True else ("blocked" if gate.get("passed") is False else "-"))
         review_status = item.get("review_status") or "-"
         lines.append(
-            f"| {item['index']} | {item['file_name']} | {verdict_tier} | {review_status} | {item['status']} | {failed_stage} | {route} | {wiki_pages} | {run_id} |",
+            f"| {item['index']} | {item['file_name']} | {verdict_tier} | {gate_display} | {review_status} | {item['status']} | {failed_stage} | {route} | {wiki_pages} | {run_id} |",
         )
 
     lines.append("")

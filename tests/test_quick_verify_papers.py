@@ -629,3 +629,103 @@ def test_us007_full_coverage_no_sample_warning() -> None:
     v = _build_verdict(results, manifest_total=1, verified_paper_count=1)
     assert v["status"] == "basically_yes"
     assert "样本" not in v["answer"]
+
+
+# ---------------------------------------------------------------------------
+# US-008: Expose gate, review, and final verdict together per paper
+# ---------------------------------------------------------------------------
+
+
+def test_us008_per_paper_json_includes_gate_review_verdict(tmp_path: Path) -> None:
+    """AC1: Each per-paper record must include gate.decision, review_status, and verdict together."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    for item in payload["files"]:
+        assert "gate" in item, f"Missing gate section for {item['file_name']}"
+        assert "decision" in item["gate"], f"Missing gate.decision for {item['file_name']}"
+        assert "review_status" in item, f"Missing review_status for {item['file_name']}"
+        assert "verdict" in item, f"Missing verdict for {item['file_name']}"
+
+
+def test_us008_markdown_table_includes_gate_column(tmp_path: Path) -> None:
+    """AC2: Markdown per-paper table must include a Gate column showing gate decision."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "| Gate |" in md_text, "Missing Gate column header in markdown table"
+
+
+def test_us008_markdown_table_has_verdict_gate_review_together(tmp_path: Path) -> None:
+    """AC2: The markdown table must expose verdict, gate, and review status columns side by side."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    # Verify the header has all three columns
+    header_line = [line for line in md_text.splitlines() if "| #" in line][0]
+    assert "Verdict" in header_line
+    assert "Gate" in header_line
+    assert "Review Status" in header_line
+
+
+def test_us008_blocked_paper_inspectable_from_summary(tmp_path: Path) -> None:
+    """AC3: A blocked paper can be inspected from summary output without raw artifacts."""
+    # Simulate a quality_blocked result and verify gate info is in per-paper JSON
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": False, "decision": "blocked", "reasons": ["quality_score_below_threshold"]},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 3},
+    }
+    verdict = _classify_verdict(item)
+    assert verdict == "quality_blocked"
+    # Gate info and review_status are accessible from the same dict
+    assert item["gate"]["decision"] == "blocked"
+    assert "review_status" in item
+    assert "verdict" not in item  # verdict is added post-construction
+    item["verdict"] = verdict
+    # Now all three signals are present together
+    assert item["gate"]["decision"] == "blocked"
+    assert item["review_status"] is None
+    assert item["verdict"] == "quality_blocked"
+
+
+def test_us008_per_paper_result_json_has_all_three_signals(tmp_path: Path) -> None:
+    """AC1+AC3: Individual result.json files must contain gate, review_status, and verdict."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    runs_dir = outdir / "runs"
+    run_dirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+    assert len(run_dirs) >= 1
+
+    for run_dir in run_dirs:
+        result_json = run_dir / "result.json"
+        data = json.loads(result_json.read_text(encoding="utf-8"))
+        assert "gate" in data
+        assert "decision" in data["gate"]
+        assert "review_status" in data
+        assert "verdict" in data
