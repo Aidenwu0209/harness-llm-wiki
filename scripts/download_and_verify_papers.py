@@ -297,11 +297,25 @@ def _combine_paper_results(
     return combined
 
 
+def _fmt_rate(rate: float | None) -> str:
+    """Format a rate value for human-readable output."""
+    if rate is None:
+        return "N/A"
+    return f"{rate:.0%}"
+
+
 def _build_verdict(
     selected_papers: list[dict[str, Any]],
     download_results: list[dict[str, Any]],
     verify_payload: dict[str, Any] | None,
 ) -> dict[str, str]:
+    """Build a quality-aware top-level verdict for download-and-verify.
+
+    The verdict is independently composed from download outcomes AND
+    quick-verify quality signals (gate pass rate, pending review count,
+    usable-wiki-ready count).  It is never a direct passthrough of
+    quick-verify's internal verdict.
+    """
     selected_count = len(selected_papers)
     download_success_count = sum(1 for item in download_results if item["status"] in ("downloaded", "reused"))
     download_failed_count = sum(1 for item in download_results if item["status"] == "failed")
@@ -320,27 +334,63 @@ def _build_verdict(
             "answer": "已经拿到部分 PDF，但这次没有形成 quick verify 结果，因此无法给出可靠结论。",
         }
 
-    verify_verdict = verify_payload["verdict"]
-    verify_status = verify_verdict["status"]
+    # Extract quality signals from quick-verify totals
+    verify_totals = verify_payload["totals"]
+    usable_wiki_ready = verify_totals.get("usable_wiki_ready_count", 0)
+    quality_blocked = verify_totals.get("quality_blocked_count", 0)
+    pending_review = verify_totals.get("pending_review_count", 0)
+    gate_rate = verify_totals.get("gate_pass_rate")
 
-    if download_failed_count == 0:
-        return verify_verdict
+    coverage_prefix = ""
+    if download_failed_count > 0:
+        coverage_prefix = f"已成功下载 {download_success_count}/{selected_count} 篇论文。"
 
-    if verify_status in ("basically_yes", "partial_yes"):
+    # All delivered — no quality blocks, all downloads succeeded
+    if (
+        usable_wiki_ready == download_success_count
+        and quality_blocked == 0
+        and download_failed_count == 0
+    ):
+        gate_note = f" gate 通过率 {_fmt_rate(gate_rate)}。" if gate_rate is not None else ""
+        return {
+            "status": "basically_yes",
+            "headline": "当前系统已经基本具备一键批量转 wiki 的能力",
+            "answer": (
+                f"下载全部成功，{usable_wiki_ready} 篇论文均通过质量门禁并导出了可用 wiki 页面。{gate_note}"
+            ).rstrip(),
+        }
+
+    # Some papers reached usable-wiki-ready
+    if usable_wiki_ready > 0:
         return {
             "status": "partial_yes",
-            "headline": "验证链路可以跑通，但样例集没有全部下载成功",
+            "headline": "当前系统已经部分具备一键批量转 wiki 的能力",
             "answer": (
-                f"已成功下载并验证 {download_success_count} / {selected_count} 篇论文。"
-                "现有结果说明系统具备一定的一键转 wiki 能力，但这次样例集并未完整覆盖。"
+                f"{coverage_prefix}"
+                f"{usable_wiki_ready} 篇达到可用 wiki 标准，"
+                f"{quality_blocked} 篇被质量阻断，"
+                f"{pending_review} 篇待审核。"
+            ),
+        }
+
+    # Quality blocks present but no usable wiki
+    if quality_blocked > 0 or pending_review > 0:
+        return {
+            "status": "quality_blocked",
+            "headline": "下载成功但验证存在质量阻断",
+            "answer": (
+                f"{coverage_prefix}"
+                f"{quality_blocked} 篇被质量门禁阻断，"
+                f"{pending_review} 篇待审核。"
             ),
         }
 
     return {
         "status": "not_yet",
-        "headline": "这次下载与验证都没有形成稳定结论",
+        "headline": "下载与验证均未形成稳定结论",
         "answer": (
-            f"已成功下载 {download_success_count} / {selected_count} 篇论文，但验证结果仍不足以说明系统已经具备稳定的一键转 wiki 能力。"
+            f"{coverage_prefix}"
+            "验证结果不足以说明系统具备稳定的一键转 wiki 能力。"
         ),
     }
 
@@ -374,6 +424,15 @@ def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
         "",
         f"- Download failures: **{totals['download_failed_count']}**",
         f"- Successful quick-verify runs: **{totals['verify_success_count']} / {totals['verify_processed_count']}**",
+        "",
+        "## Quality Metrics",
+        "",
+        f"- Download success rate: **{_fmt_rate(totals['download_success_rate'])}**",
+        f"- Verify success rate: **{_fmt_rate(totals['verify_success_rate'])}**",
+        f"- Gate pass rate: **{_fmt_rate(totals['gate_pass_rate'])}**",
+        f"- Pending review: **{totals['pending_review_count']}**",
+        f"- Usable wiki ready: **{totals['usable_wiki_ready_count']}**",
+        f"- Quality blocked: **{totals['quality_blocked_count']}**",
         "",
         "## Verdict",
         "",
@@ -493,6 +552,21 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
     )
 
     verify_totals = verify_payload["totals"] if verify_payload else {}
+    verify_processed = verify_totals.get("pdfs_processed", 0)
+    verify_success = verify_totals.get("success_count", 0)
+
+    # US-011: Independent quality summary
+    download_success_rate = (
+        round(sum(1 for item in download_results if item["status"] in ("downloaded", "reused")) / len(selected_papers), 4)
+        if selected_papers
+        else None
+    )
+    verify_success_rate = (
+        round(verify_success / verify_processed, 4)
+        if verify_processed > 0
+        else None
+    )
+
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "manifest_path": str(manifest_path),
@@ -522,6 +596,13 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
             "selected_paper_count": len(selected_papers),
             "downloaded_paper_count": sum(1 for item in download_results if item["status"] in ("downloaded", "reused")),
             "verified_paper_count": verify_totals.get("pdfs_processed", 0),
+            # US-011: Independent quality summary
+            "download_success_rate": download_success_rate,
+            "verify_success_rate": verify_success_rate,
+            "gate_pass_rate": verify_totals.get("gate_pass_rate"),
+            "pending_review_count": verify_totals.get("pending_review_count", 0),
+            "usable_wiki_ready_count": verify_totals.get("usable_wiki_ready_count", 0),
+            "quality_blocked_count": verify_totals.get("quality_blocked_count", 0),
         },
         "verdict": verdict,
         "downloads": download_results,
