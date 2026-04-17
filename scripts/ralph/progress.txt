@@ -5,6 +5,7 @@
 - Focus test coverage on small targeted files under `tests/` and reuse fixture helpers from `tests/fixtures/build_fixtures.py` when batch or parser fixtures are needed.
 - `PipelineResult.gate_passed` is `bool | None` (None = gate stage never reached); `RunManifest.review_status` can be `None`, `"pending"`, `"auto_merged"`, `"approved"`, `"rejected"`, `"changes_requested"`.
 - Verdict tier classification lives in `_classify_verdict()` in `scripts/quick_verify_papers.py`; downstream stories should reuse this function rather than re-implementing gate/review logic.
+- Aggregate quality metrics (`gate_pass_rate`, `lint_blocker_count`, `pending_review_count`) are computed in `run_batch()` and added to the `totals` dict; `pending_review_count` was already present from US-003.
 
 ## 2026-04-18 00:14 - US-001
 - Added `_classify_verdict()` function to `scripts/quick_verify_papers.py` that assigns each paper one of three verdict tiers: `pipeline_runnable`, `quality_blocked`, or `usable_wiki_ready`
@@ -79,4 +80,100 @@
   - Wiki page types are determined by directory components: `sources/`, `entities/`, `concepts/` — checked via `Path(page_path).parts`
   - `_is_wiki_sparse()` returns False when no pages exist (signal only meaningful when pages are exported)
   - The three post-processing signals (`verdict`, `knowledge_sparse`, `wiki_sparse`) are all computed in the same block in `run_batch()`, making it easy to add more signals
+---
+
+## 2026-04-18 01:29 - US-006
+- Added explicit coverage counters (`manifest_total`, `selected_paper_count`, `downloaded_paper_count`, `verified_paper_count`) to both `quick_verify_papers.py` and `download_and_verify_papers.py` summary.json totals
+- Added "Sample Coverage" section to markdown output in both scripts, clearly showing manifest→selected→downloaded→verified funnel
+- For quick_verify: `manifest_total` = all PDFs discovered, `downloaded_paper_count` = selected (PDFs are local)
+- For download_and_verify: `manifest_total` = manifest YAML total, `downloaded_paper_count` = actual downloads
+- Added 6 tests: 3 for quick_verify (counters in JSON, markdown section, partial batch subset), 3 for download_and_verify (counters in JSON, partial batch, markdown section)
+- All ACs pass: mypy clean, 1067 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `scripts/download_and_verify_papers.py`, `tests/test_quick_verify_papers.py`, `tests/test_download_and_verify_papers.py`
+- **未来迭代的学习：**
+  - Coverage counters are additive to existing totals dict, not replacing the older `pdfs_discovered`/`pdfs_selected`/`pdfs_processed` names — both coexist for backward compatibility
+  - `download_and_verify_papers.py` reuses quick_verify's `run_batch()` via import, so any counters added to quick_verify automatically appear in the inner verify payload; the outer payload needs its own explicit copies
+  - Markdown "Sample Coverage" section is placed before "Run Outcomes" to make coverage visible first
+---
+
+## 2026-04-18 01:38 - US-007
+- Rewrote `_build_verdict()` to derive headline/answer from verdict-tier totals (`usable_wiki_ready`, `quality_blocked`, `pipeline_runnable`) instead of raw `success_count` and `wiki_count`
+- Added `manifest_total` and `verified_paper_count` keyword parameters to `_build_verdict()` for coverage-aware verdict text
+- When coverage is partial (verified < manifest), the answer explicitly states the sample limitation with counts
+- Added `quality_blocked` status tier: all-blocked runs produce a distinct headline mentioning quality blocking
+- Updated `run_batch()` call site to pass `discovered_count` and `len(results)` as coverage parameters
+- Added 6 targeted tests: verdict-tier derivation, blocked-no-fully-ready, partial-coverage-note, all-quality-blocked, no-results-edge, full-coverage-no-warning
+- All ACs pass: mypy clean, 1073 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `_build_verdict()` in `download_and_verify_papers.py` is a separate function with its own signature — it wraps quick_verify's verdict and does NOT need to change when quick_verify's `_build_verdict` changes
+  - The `download_and_verify` version passes through quick_verify's verdict via `verify_payload["verdict"]`, so any quality-aware improvements to quick_verify's verdict automatically flow downstream
+  - New `_build_verdict` signature uses keyword-only args (`*`) for coverage params, maintaining backward compatibility with callers that only pass `results`
+---
+
+## 2026-04-18 01:44 - US-008
+- Added "Gate" column to markdown per-paper table showing gate decision (falls back to passed/blocked display when decision is None)
+- Verified per-paper JSON already includes `gate` (with `decision`), `review_status`, and `verdict` together (AC1 was already satisfied by prior stories)
+- Added 5 tests: per-paper JSON has gate+review+verdict, markdown Gate column header, all three columns side by side, blocked paper inspectable from summary, individual result.json has all three signals
+- All ACs pass: mypy clean, 1078 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`
+- **未来迭代的学习：**
+  - The per-paper result dict already has `gate`, `review_status`, and `verdict` at the same top level — no structural changes needed for JSON ACs
+  - Gate display in markdown uses `gate.decision` when available, falls back to "passed"/"blocked" derived from `gate.passed` boolean, then "-" as final fallback
+  - When adding table columns, the separator row must also be updated to match column count
+---
+
+## 2026-04-18 01:51 - US-009
+- Added `gate_pass_rate` (float 0–1 or None when no papers reached gate stage), `lint_blocker_count`, and consolidated `pending_review_count` as aggregate quality metrics in `summary.json` totals
+- Added `_fmt_rate()` helper to format gate pass rate as human-readable percentage (e.g., "50%", "N/A")
+- Added "Quality Metrics" section to markdown summary output rendering gate pass rate, pending review count, and lint blocker count
+- Added 6 targeted tests: quality metrics in JSON, markdown section, gate pass rate computation, None when no gate evaluated, lint blocker counting, _fmt_rate helper
+- All ACs pass: mypy clean, 1084 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `gate_pass_rate` is computed from papers where `gate.passed is not None` (i.e., papers that actually reached the gate stage), not from all papers
+  - `pending_review_count` was already tracked from US-003; US-009 reuses it in the new Quality Metrics section rather than creating a duplicate
+  - `_fmt_rate()` uses Python's format spec `:.0%` which rounds to nearest integer percentage
+---
+## 2026-04-18 02:00 - US-010
+- Added `page_buckets` dict to per-paper results with `generated_candidate_pages`, `gate_passed_pages`, `final_vault_ready_pages`
+- Added same three fields as aggregate totals in `summary.json` totals
+- Added "Generated candidate pages", "Gate-passed pages", "Final vault-ready pages" lines to markdown Run Outcomes section
+- Per-paper `page_buckets` is computed inside the per-paper loop (before `result.json` write), so individual result files include it
+- Aggregate totals are derived by summing per-paper `page_buckets` values
+- Added 6 tests: summary JSON buckets, per-paper result.json buckets, blocked paper excluded from vault_ready, markdown lines, per-paper bucket reflects verdict, zero-pages edge case
+- All ACs pass: mypy clean, 1090 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - Per-paper post-processing fields (`verdict`, `knowledge_sparse`, `wiki_sparse`, `page_buckets`) must be added BEFORE `result.json` write to be included in individual run files
+  - Aggregate totals can then simply sum the per-paper values rather than recomputing from raw data
+  - `page_buckets` uses the same gate.passed and verdict signals already established by prior stories — no new classification logic needed
+---
+## 2026-04-18 02:13 - US-011
+- Rewrote `_build_verdict()` in `scripts/download_and_verify_papers.py` to be independently quality-aware (no longer a passthrough of quick-verify verdict)
+- Added quality summary fields to download-and-verify totals: `download_success_rate`, `verify_success_rate`, `gate_pass_rate`, `pending_review_count`, `usable_wiki_ready_count`, `quality_blocked_count`
+- Added `_fmt_rate()` helper to download_and_verify for formatting rates in markdown
+- Added "Quality Metrics" section to markdown summary output with all six quality fields
+- Verdict composition now considers usable_wiki_ready_count, quality_blocked_count, pending_review_count from quick-verify totals
+- Added 6 tests: JSON quality fields, verdict not passthrough, both root+session preserve fields, markdown section, partial batch, unit test for _build_verdict
+- All ACs pass: mypy clean, 1096 tests pass
+- **Changed files:** `scripts/download_and_verify_papers.py`, `tests/test_download_and_verify_papers.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `_build_verdict()` in download_and_verify is now fully independent — it extracts quality signals from `verify_payload["totals"]` and composes its own verdict status/headline/answer
+  - Quality fields are computed from `verify_totals` which comes from quick_verify's `run_batch()` — all US-009 metrics automatically flow into download-and-verify
+  - Both root and session summary files share the same payload dict, so adding fields to the payload automatically updates both outputs
+  - `_fmt_rate()` helper is duplicated between quick_verify and download_and_verify — they could share it, but keeping them separate avoids coupling between the two scripts
+---
+## 2026-04-18 15:30 - US-012
+- Verified `docos/slugify.py` already implements a complete deterministic ASCII-safe slug sanitizer
+- Verified `docos/wiki/compiler.py` delegates all slug generation through `_slug()` → `docos.slugify.slugify()` (single canonical path)
+- Added 20 targeted tests in `tests/test_slugify.py` covering all 3 ACs: canonical sanitizer delegation, ASCII-safe output (no control chars, only `[a-z0-9-]`), and determinism (same input → same output)
+- All ACs pass: mypy clean (46 source files), 1116 tests pass
+- **Changed files:** `tests/test_slugify.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `docos/slugify.py` is the single canonical slug module — all wiki page filenames must go through it
+  - `_slug()` in `compiler.py` is a thin wrapper that imports and delegates to `docos.slugify.slugify`
+  - Control characters are stripped (not replaced with hyphens) — "hello\x00world" → "helloworld", not "hello-world"
+  - Empty slug fallback returns "untitled" — important for US-013 (rejecting empty slugs)
+  - `_sanitize_key()` in `artifact_stores.py` is a separate function for store keys (not filenames), uses simpler logic
 ---
