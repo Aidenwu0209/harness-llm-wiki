@@ -3,6 +3,8 @@
 - Batch verification entrypoints live in `scripts/quick_verify_papers.py` and `scripts/download_and_verify_papers.py`.
 - Pipeline quality signals already flow through `docos/pipeline/runner.py`, `docos/run_store.py`, `docos/artifact_stores.py`, `docos/review/queue.py`, and `docos/wiki/compiler.py`; prefer reusing those artifacts instead of inventing parallel state.
 - Focus test coverage on small targeted files under `tests/` and reuse fixture helpers from `tests/fixtures/build_fixtures.py` when batch or parser fixtures are needed.
+- `_export_wiki_pages()` returns a dict `{"exported": [...], "filtered_empty_slug": int}` — callers must access `["exported"]` for the path list and `["filtered_empty_slug"]` for the rejected count.
+- Empty-slug rejection happens at two layers: compile stage (`_stage_compile` via `_is_valid_page_path`) and export stage (`_export_wiki_pages`). Both contribute to `dropped_empty_slug_count` in per-paper results.
 - `PipelineResult.gate_passed` is `bool | None` (None = gate stage never reached); `RunManifest.review_status` can be `None`, `"pending"`, `"auto_merged"`, `"approved"`, `"rejected"`, `"changes_requested"`.
 - Verdict tier classification lives in `_classify_verdict()` in `scripts/quick_verify_papers.py`; downstream stories should reuse this function rather than re-implementing gate/review logic.
 - Aggregate quality metrics (`gate_pass_rate`, `lint_blocker_count`, `pending_review_count`) are computed in `run_batch()` and added to the `totals` dict; `pending_review_count` was already present from US-003.
@@ -176,4 +178,37 @@
   - Control characters are stripped (not replaced with hyphens) — "hello\x00world" → "helloworld", not "hello-world"
   - Empty slug fallback returns "untitled" — important for US-013 (rejecting empty slugs)
   - `_sanitize_key()` in `artifact_stores.py` is a separate function for store keys (not filenames), uses simpler logic
+---
+
+## 2026-04-18 07:26 - US-013
+- Changed `_export_wiki_pages()` return type from `list[str]` to `dict[str, Any]` with `{"exported": [...], "filtered_empty_slug": int}` to expose empty-slug rejection count
+- Added `dropped_empty_slug_count` to per-paper results (sum of manifest compile-stage drops + export-stage filter count)
+- Added `dropped_empty_slug_count` to batch summary totals in `summary.json`
+- Added "Dropped empty slug" line to markdown Verdict Tiers section
+- Added source page slug validation in `_stage_compile` (was missing — only entity and concept pages were validated before)
+- Extended test suite from 8 to 15 tests: added mixed empty/valid export test, per-paper dropped count, batch summary totals, markdown output lines, filesystem safety check
+- All ACs pass: mypy clean (46 source files), 1131 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `docos/pipeline/runner.py`, `tests/test_empty_slug_rejection_us013.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `_export_wiki_pages` now returns a dict, not a list — any new callers must access `["exported"]` for the path list
+  - Empty-slug rejection has two layers: compile stage in runner.py and export stage in quick_verify — both counted separately and summed in per-paper results
+  - Source pages are now also validated for empty slugs in `_stage_compile`, so ALL page types (source, entity, concept) go through the same `_is_valid_page_path` gate
+---
+
+## 2026-04-18 07:44 - US-014
+- Added `sanitize_title()` and `is_readable_title()` to `docos/slugify.py` for page title hygiene
+- `sanitize_title()` removes control chars (\x00-\x08, \x0b, \x0c, \x0e-\x1f, \x7f-\x9f, \ufffd), private-use codepoints (\ue000-\uf8ff), and collapses whitespace
+- `is_readable_title()` checks that a title has >= 30% alphanumeric/readable characters (configurable threshold)
+- Applied `_clean_title()` wrapper in all `WikiCompiler.compile_*()` methods so both frontmatter title and body heading use sanitized titles
+- Added readability gate in `runner.py._stage_compile()` — entity and concept pages with unreadable names are skipped before compilation
+- Added `dropped_unreadable_title_count` field to `RunManifest` model and persist it from compile stage
+- Added 31 tests covering: control char removal, binary garbage filtering, CJK preservation, readability thresholds, compiler integration, runner skip behavior
+- All ACs pass: mypy clean (46 source files), 1162 tests pass
+- **Changed files:** `docos/slugify.py`, `docos/wiki/compiler.py`, `docos/pipeline/runner.py`, `docos/models/run.py`, `tests/test_title_sanitization_us014.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - Title sanitization is applied via `_clean_title()` helper in compiler.py — same pattern as `_slug()` for filenames
+  - The readability check happens in the runner BEFORE compilation (more efficient than compiling then discarding)
+  - `dropped_unreadable_title_count` is tracked separately from `dropped_empty_slug_count` in the manifest
+  - `sanitize_title()` preserves CJK and normal punctuation — only strips control chars, private-use, and replacement characters
+  - Entity page tests use `_make_entity()` mock helper; concept pages take `concept_name` string directly
 ---
