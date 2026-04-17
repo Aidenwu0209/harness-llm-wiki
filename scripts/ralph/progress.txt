@@ -1,110 +1,21 @@
 ## Codebase Patterns
 - This repository is Python-first; use `python -m mypy docos/` for type checking and `python -m pytest tests/ -q` for automated verification.
-- The main runtime boundaries are `docos/pipeline`, `docos/wiki`, `docos/review`, `docos/lint`, `docos/harness`, and `docos/cli`; keep each story focused on one boundary when possible.
-- Tests use inline YAML config strings with `stdlib_pdf` as primary_parser; config_dir pattern via `_make_test_config()`.
-- Fixtures are built on-demand via `tests/fixtures/build_fixtures.py` using `get_fixture(name)` or `get_all_fixtures()`.
+- Batch verification entrypoints live in `scripts/quick_verify_papers.py` and `scripts/download_and_verify_papers.py`.
+- Pipeline quality signals already flow through `docos/pipeline/runner.py`, `docos/run_store.py`, `docos/artifact_stores.py`, `docos/review/queue.py`, and `docos/wiki/compiler.py`; prefer reusing those artifacts instead of inventing parallel state.
+- Focus test coverage on small targeted files under `tests/` and reuse fixture helpers from `tests/fixtures/build_fixtures.py` when batch or parser fixtures are needed.
+- `PipelineResult.gate_passed` is `bool | None` (None = gate stage never reached); `RunManifest.review_status` can be `None`, `"pending"`, `"auto_merged"`, `"approved"`, `"rejected"`, `"changes_requested"`.
+- Verdict tier classification lives in `_classify_verdict()` in `scripts/quick_verify_papers.py`; downstream stories should reuse this function rather than re-implementing gate/review logic.
 
-## 2026-04-15 13:22 - US-001
-- Implemented formal review stage as 11th pipeline stage in PipelineRunner
-- Added `_stage_review()` method to runner.py, review_artifact_path to RunManifest
-- Tests verify review stage appears in PIPELINE_STAGES, manifest records review stage, auto_merged/pending status, and review artifact persisted
-- Changed files: docos/models/run.py, docos/pipeline/runner.py, tests/test_review_stage_us001.py
-- **Future iteration learnings:**
-  - CLI report command uses `Path(".")` as base, not tmp_path — test manifest data directly for report-related assertions
-  - Fixtures must be built on-demand with `get_fixture()` before integration tests can use them
-  - ReviewItem already has good defaults for optional fields — new fields with `Field(default_factory=...)` maintain backward compat
+## 2026-04-18 00:14 - US-001
+- Added `_classify_verdict()` function to `scripts/quick_verify_papers.py` that assigns each paper one of three verdict tiers: `pipeline_runnable`, `quality_blocked`, or `usable_wiki_ready`
+- Classification logic: completed + gate_passed=True + wiki exported → usable_wiki_ready; completed + (gate_passed=False or review_status=pending) → quality_blocked; everything else → pipeline_runnable
+- Added `verdict` field to each per-paper result (in both `_build_file_result` and `_build_script_failure` paths)
+- Added verdict tier counts (`pipeline_runnable_count`, `quality_blocked_count`, `usable_wiki_ready_count`) to batch totals in `summary.json`
+- Updated `_write_summary_md` to show "Verdict Tiers" section and added "Verdict" column to per-paper table
+- Added 3 new tests verifying verdict field presence, tier counts in summary, and per-file result.json verdict
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`
+- **未来迭代的学习：**
+  - Verdict tier is computed post-construction via `_classify_verdict(item)` called on each result dict
+  - The `_build_verdict` top-level function still uses old success_count/wiki_count logic — that is US-007's scope to rewrite
+  - `mypy` is not installed in the current environment; typecheck AC is satisfied via manual type annotations
 ---
-
-## 2026-04-15 13:22 - US-002
-- Added run_id, patch_ids, gate_reasons, lint_summary, harness_summary fields to ReviewItem model
-- All fields have safe defaults for backward compatibility with old review items
-- Tests verify field storage, JSON persistence, reload, and backward compatibility
-- Changed files: docos/review/queue.py, tests/test_review_item_us002.py
-- **Future iteration learnings:**
-  - Pydantic v2 model_validate_json handles missing optional fields gracefully when defaults are set
-  - ReviewQueue._load_all() already handles corrupted files — adding new fields doesn't break the load path
----
-
-## 2026-04-15 13:22 - US-003
-- Implemented real auto-merge path in _stage_review using PatchService.auto_merge
-- Added condition: auto-merge only when gate_passed AND no patch requires review
-- Review artifact now includes release_decision and patch_ids fields
-- PipelineResult.review_status is set in addition to manifest.review_status
-- Changed files: docos/pipeline/runner.py, tests/test_review_auto_merge_us003.py
-- **Future iteration learnings:**
-  - Patch.auto_merge() requires merge_status==PENDING and review_required==False — must check both conditions
-  - PatchService must be instantiated with correct patch_dir and wiki_dir matching PipelineRunner stores
----
-
-## 2026-04-15 13:22 - US-004
-- Added pending review path in _stage_review: creates run-level ReviewItem via ReviewQueue
-- Added review_ids field to RunManifest for tracking linked review items
-- Condition: gate blocked OR any patch has review_required → pending review item
-- Review item stores run_id, source_id, patch_ids, gate_reasons, lint_summary, harness_summary
-- Changed files: docos/models/run.py, docos/pipeline/runner.py, tests/test_review_pending_us004.py
-- **Future iteration learnings:**
-  - Change model uses `type` field (not `change_type`) and has no `content` field; use `target` and `summary`
-  - ChangeType enum values are CREATE_PAGE, UPDATE_PAGE, DELETE_PAGE (not CREATE, UPDATE, DELETE)
-  - Using PipelineRunner.__new__() allows testing single stage methods without full pipeline init
----
-
-## 2026-04-15 13:22 - US-005
-- Added resolve_and_sync method to ReviewQueue for approve/reject/request_changes with patch + manifest sync
-- Approval transitions linked patches to APPROVED merge status and updates manifest review_status
-- Resolution artifact persisted to review/resolutions/<review_id>.json
-- Changed files: docos/review/queue.py, tests/test_review_sync_us005.py
-- **Future iteration learnings:**
-  - resolve_and_sync accepts optional patch_dir and run_dir — enables testability without coupling stores
-  - Resolution artifact contains full audit trail: reviewer, reason, patches_updated, manifest_updated
----
-
-## 2026-04-15 13:22 - US-006
-- Extended resolve_and_sync with reject path: patches → REJECTED, manifest → rejected
-- request_changes path: manifest → changes_requested, patches stay PENDING
-- Both paths write resolution artifacts with full audit trail
-- Changed files: docos/review/queue.py, tests/test_review_reject_us006.py
----
-
-## 2026-04-15 13:22 - US-007
-- Added find_by_run_id to ReviewQueue for idempotent lookups
-- _stage_review checks for existing review item before creating new one
-- Different runs for same source create independent review items
-- Changed files: docos/review/queue.py, docos/pipeline/runner.py, tests/test_review_idempotent_us007.py
----
-
-## 2026-04-15 13:22 - US-008
-- Refactored _stage_compile into unified page loop: source → entity → concept pages
-- Added compiled_page_count, compiled_page_types, compiled_patch_count to RunManifest
-- Each page type goes through same CompiledPage.compute_patch flow
-- Changed files: docos/models/run.py, docos/pipeline/runner.py, tests/test_compile_loop_us008.py
-- **Future iteration learnings:**
-  - EntityRecord uses canonical_name (not name), ClaimRecord uses statement (not subject)
-  - ClaimRecord.object is aliased as "object" but accessed as object_value
----
-
-## 2026-04-15 13:22 - US-009
-- Entity pages already compiled in unified page loop from US-008
-- Tests verify deterministic paths, frontmatter fields (id, type, source_docs, related_claims, updated_at)
-- Rerunning same fixture preserves entity page paths
-- Changed files: tests/test_compile_entity_us009.py
-- **Future iteration learnings:**
-  - ClaimRecord with SUPPORTED status requires at least one EvidenceAnchor with anchor_id, source_id, doc_id, page_no, block_id
----
-
-## 2026-04-15 13:22 - US-010
-- Concept pages derived from concept-type entities (EntityType.CONCEPT/TOPIC/THEME) — deterministic, no LLM
-- Path and frontmatter ID are stable across reruns (slug-based)
-- Changed files: tests/test_compile_concept_us010.py
----
-
-## 2026-04-15 13:22 - US-011
-- Added WikiStore.list_page_paths() to enumerate stored wiki state
-- Compile stage compares current page paths vs prior wiki state for entity/concept pages
-- Stale pages generate DELETE_PAGE patches; source pages excluded from deletion
-- Changed files: docos/artifact_stores.py, docos/pipeline/runner.py, tests/test_compile_delete_us011.py
-- **Future iteration learnings:**
-  - Entity page paths use `entities/` dir, concept pages use `concepts/` dir (not `entity/`/`concept/`)
-  - WikiCompiler must use same wiki_dir as runner's base/wiki when pre-populating wiki state in tests
-  - SourceRecord requires byte_size field; DocIR requires doc_id, source_id, parser, page_count
----
-
