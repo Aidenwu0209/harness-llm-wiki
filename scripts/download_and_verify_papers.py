@@ -1,0 +1,572 @@
+#!/usr/bin/env python3
+"""Download a public paper set and run the existing quick-verify workflow."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import shutil
+import sys
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Sequence
+
+import yaml  # type: ignore[import-untyped]
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.quick_verify_papers import run_batch
+
+DEFAULT_TIMEOUT_SECONDS = 60
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Download a paper set manifest, then run quick_verify_papers on the downloaded PDFs.",
+    )
+    parser.add_argument(
+        "--manifest",
+        type=Path,
+        required=True,
+        help="YAML manifest describing the paper set to download.",
+    )
+    parser.add_argument(
+        "--outdir",
+        type=Path,
+        required=True,
+        help="Output directory for downloads, verify artifacts, and final summaries.",
+    )
+    parser.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help="Download at most this many papers from the manifest, in manifest order.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=REPO_ROOT / "configs" / "router.yaml",
+        help="Router config passed through to quick_verify_papers.",
+    )
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=DEFAULT_TIMEOUT_SECONDS,
+        help="Per-file download timeout in seconds.",
+    )
+    parser.add_argument(
+        "--continue-on-error",
+        dest="continue_on_error",
+        action="store_true",
+        default=True,
+        help="Keep processing the remaining papers after a download or verify failure. This is the default.",
+    )
+    parser.add_argument(
+        "--stop-on-error",
+        dest="continue_on_error",
+        action="store_false",
+        help="Stop after the first download or verify failure.",
+    )
+    return parser.parse_args(argv)
+
+
+def _slug(text: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in text).strip("-") or "paper-set"
+
+
+def _sha256(file_path: Path) -> str:
+    digest = hashlib.sha256()
+    with file_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_manifest(manifest_path: Path) -> dict[str, Any]:
+    data = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        msg = f"Manifest must be a YAML mapping: {manifest_path}"
+        raise ValueError(msg)
+
+    papers = data.get("papers")
+    if not isinstance(papers, list) or not papers:
+        msg = f"Manifest must contain a non-empty 'papers' list: {manifest_path}"
+        raise ValueError(msg)
+
+    normalized_papers: list[dict[str, Any]] = []
+    for index, raw_paper in enumerate(papers, start=1):
+        if not isinstance(raw_paper, dict):
+            msg = f"Manifest paper entry #{index} must be a mapping"
+            raise ValueError(msg)
+
+        title = raw_paper.get("title")
+        pdf_url = raw_paper.get("pdf_url")
+        filename = raw_paper.get("filename")
+
+        if not title or not isinstance(title, str):
+            msg = f"Manifest paper entry #{index} is missing a string 'title'"
+            raise ValueError(msg)
+        if not pdf_url or not isinstance(pdf_url, str):
+            msg = f"Manifest paper entry #{index} is missing a string 'pdf_url'"
+            raise ValueError(msg)
+        if not filename or not isinstance(filename, str):
+            msg = f"Manifest paper entry #{index} is missing a string 'filename'"
+            raise ValueError(msg)
+        if not filename.lower().endswith(".pdf"):
+            msg = f"Manifest filename must end with .pdf: {filename}"
+            raise ValueError(msg)
+
+        paper = dict(raw_paper)
+        paper.setdefault("id", f"paper_{index:02d}")
+        normalized_papers.append(paper)
+
+    return {
+        "name": data.get("name", manifest_path.stem),
+        "description": data.get("description", ""),
+        "papers": normalized_papers,
+    }
+
+
+def _select_papers(manifest: dict[str, Any], max_files: int | None) -> list[dict[str, Any]]:
+    papers = list(manifest["papers"])
+    if max_files is not None:
+        if max_files <= 0:
+            msg = "--max-files must be greater than 0"
+            raise ValueError(msg)
+        return papers[:max_files]
+    return papers
+
+
+def _copy_local_file(source_path: Path, dest_path: Path) -> None:
+    if not source_path.exists():
+        msg = f"Local file URL does not exist: {source_path}"
+        raise FileNotFoundError(msg)
+    shutil.copy2(source_path, dest_path)
+
+
+def _download_remote_file(url: str, dest_path: Path, timeout_seconds: int) -> str:
+    request = urllib.request.Request(url, headers={"User-Agent": "docos-quick-verify/0.1"})
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        final_url = response.geturl()
+        with dest_path.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+    return final_url
+
+
+def _materialize_pdf(source_url: str, dest_path: Path, timeout_seconds: int) -> str:
+    parsed = urllib.parse.urlparse(source_url)
+    if parsed.scheme == "file":
+        local_path = Path(urllib.request.url2pathname(parsed.path))
+        _copy_local_file(local_path, dest_path)
+        return source_url
+
+    if parsed.scheme in ("http", "https"):
+        return _download_remote_file(source_url, dest_path, timeout_seconds)
+
+    if parsed.scheme == "" and Path(source_url).exists():
+        _copy_local_file(Path(source_url), dest_path)
+        return str(Path(source_url).resolve())
+
+    msg = f"Unsupported URL scheme for pdf_url: {source_url}"
+    raise ValueError(msg)
+
+
+def _download_paper(
+    paper: dict[str, Any],
+    downloads_dir: Path,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_path = downloads_dir / paper["filename"]
+    result: dict[str, Any] = {
+        "id": paper["id"],
+        "title": paper["title"],
+        "filename": paper["filename"],
+        "pdf_url": paper["pdf_url"],
+        "status": "downloaded",
+        "final_url": paper["pdf_url"],
+        "file_path": str(dest_path),
+        "size_bytes": 0,
+        "sha256": None,
+        "error_message": None,
+    }
+
+    if dest_path.exists() and dest_path.stat().st_size > 0:
+        result["status"] = "reused"
+        result["size_bytes"] = dest_path.stat().st_size
+        result["sha256"] = _sha256(dest_path)
+        return result
+
+    temp_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    if temp_path.exists():
+        temp_path.unlink()
+
+    try:
+        final_url = _materialize_pdf(paper["pdf_url"], temp_path, timeout_seconds)
+        if temp_path.stat().st_size == 0:
+            msg = f"Downloaded empty file for {paper['title']}"
+            raise ValueError(msg)
+        temp_path.replace(dest_path)
+        result["final_url"] = final_url
+        result["size_bytes"] = dest_path.stat().st_size
+        result["sha256"] = _sha256(dest_path)
+        return result
+    except Exception as exc:
+        if temp_path.exists():
+            temp_path.unlink()
+        result["status"] = "failed"
+        result["error_message"] = str(exc)
+        return result
+
+
+def _stage_verify_inputs(
+    download_results: list[dict[str, Any]],
+    verify_inputs_dir: Path,
+) -> list[dict[str, Any]]:
+    verify_inputs_dir.mkdir(parents=True, exist_ok=True)
+    staged: list[dict[str, Any]] = []
+
+    for item in download_results:
+        if item["status"] not in ("downloaded", "reused"):
+            continue
+
+        source_path = Path(item["file_path"])
+        staged_path = verify_inputs_dir / item["filename"]
+        shutil.copy2(source_path, staged_path)
+
+        staged_item = dict(item)
+        staged_item["verify_input_path"] = str(staged_path)
+        staged.append(staged_item)
+
+    return staged
+
+
+def _build_quick_verify_args(
+    papers_dir: Path,
+    outdir: Path,
+    config_path: Path,
+    continue_on_error: bool,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        papers_dir=papers_dir,
+        outdir=outdir,
+        pattern="*",
+        max_files=None,
+        config=config_path,
+        continue_on_error=continue_on_error,
+    )
+
+
+def _combine_paper_results(
+    selected_papers: list[dict[str, Any]],
+    download_results: list[dict[str, Any]],
+    verify_payload: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    download_by_filename = {item["filename"]: item for item in download_results}
+    verify_by_filename = {
+        item["file_name"]: item for item in (verify_payload.get("files", []) if verify_payload else [])
+    }
+
+    combined: list[dict[str, Any]] = []
+    for index, paper in enumerate(selected_papers, start=1):
+        download = download_by_filename.get(paper["filename"])
+        verify = verify_by_filename.get(paper["filename"])
+        combined.append(
+            {
+                "index": index,
+                "id": paper["id"],
+                "title": paper["title"],
+                "filename": paper["filename"],
+                "paper_meta": {
+                    key: value
+                    for key, value in paper.items()
+                    if key not in {"id", "title", "filename", "pdf_url"}
+                },
+                "pdf_url": paper["pdf_url"],
+                "download": download,
+                "verify": verify,
+            },
+        )
+
+    return combined
+
+
+def _build_verdict(
+    selected_papers: list[dict[str, Any]],
+    download_results: list[dict[str, Any]],
+    verify_payload: dict[str, Any] | None,
+) -> dict[str, str]:
+    selected_count = len(selected_papers)
+    download_success_count = sum(1 for item in download_results if item["status"] in ("downloaded", "reused"))
+    download_failed_count = sum(1 for item in download_results if item["status"] == "failed")
+
+    if download_success_count == 0:
+        return {
+            "status": "not_yet",
+            "headline": "这次未形成有效验证样本",
+            "answer": "选中的论文没有成功下载到可验证输入，因此还不能回答系统是否具备一键转 wiki 的能力。",
+        }
+
+    if verify_payload is None:
+        return {
+            "status": "partial_yes" if download_failed_count else "not_yet",
+            "headline": "下载阶段部分完成，但验证阶段没有真正跑起来",
+            "answer": "已经拿到部分 PDF，但这次没有形成 quick verify 结果，因此无法给出可靠结论。",
+        }
+
+    verify_verdict = verify_payload["verdict"]
+    verify_status = verify_verdict["status"]
+
+    if download_failed_count == 0:
+        return verify_verdict
+
+    if verify_status in ("basically_yes", "partial_yes"):
+        return {
+            "status": "partial_yes",
+            "headline": "验证链路可以跑通，但样例集没有全部下载成功",
+            "answer": (
+                f"已成功下载并验证 {download_success_count} / {selected_count} 篇论文。"
+                "现有结果说明系统具备一定的一键转 wiki 能力，但这次样例集并未完整覆盖。"
+            ),
+        }
+
+    return {
+        "status": "not_yet",
+        "headline": "这次下载与验证都没有形成稳定结论",
+        "answer": (
+            f"已成功下载 {download_success_count} / {selected_count} 篇论文，但验证结果仍不足以说明系统已经具备稳定的一键转 wiki 能力。"
+        ),
+    }
+
+
+def _write_summary_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
+    totals = payload["totals"]
+    verdict = payload["verdict"]
+    verification = payload["verification"]
+
+    lines = [
+        "# Download And Verify Summary",
+        "",
+        f"- Generated at: `{payload['generated_at']}`",
+        f"- Manifest: `{payload['manifest_path']}`",
+        f"- Manifest name: `{payload['manifest_name']}`",
+        f"- Output dir: `{payload['outdir']}`",
+        f"- Session dir: `{payload['session_dir']}`",
+        "",
+        "## Sample Coverage",
+        "",
+        f"- Manifest total: **{totals['manifest_total']}**",
+        f"- Selected for this run: **{totals['selected_paper_count']}**",
+        f"- Downloaded successfully: **{totals['downloaded_paper_count']}**",
+        f"- Verified: **{totals['verified_paper_count']}**",
+        "",
+        "## Run Outcomes",
+        "",
+        f"- Download failures: **{totals['download_failed_count']}**",
+        f"- Successful quick-verify runs: **{totals['verify_success_count']} / {totals['verify_processed_count']}**",
+        "",
+        "## Verdict",
+        "",
+        f"**{verdict['headline']}**",
+        "",
+        verdict["answer"],
+        "",
+    ]
+
+    if payload["manifest_description"]:
+        lines.extend(
+            [
+                "## Manifest Description",
+                "",
+                payload["manifest_description"],
+                "",
+            ],
+        )
+
+    if verification["summary_md_path"]:
+        lines.extend(
+            [
+                "## Quick Verify Output",
+                "",
+                f"- quick verify summary.json: `{verification['summary_json_path']}`",
+                f"- quick verify summary.md: `{verification['summary_md_path']}`",
+                "",
+            ],
+        )
+
+    lines.extend(
+        [
+            "## Per Paper",
+            "",
+            "| # | File | Download | Verify | Failed Stage | Run ID |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ],
+    )
+
+    for item in payload["files"]:
+        download_status = item["download"]["status"] if item["download"] else "not-attempted"
+        verify_status = item["verify"]["status"] if item["verify"] else "-"
+        failed_stage = item["verify"]["failed_stage"] if item["verify"] else "-"
+        run_id = item["verify"]["run_id"] if item["verify"] else "-"
+        lines.append(
+            f"| {item['index']} | {item['filename']} | {download_status} | {verify_status} | {failed_stage} | {run_id} |",
+        )
+
+    lines.append("")
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
+    manifest_path = args.manifest.resolve()
+    if not manifest_path.exists():
+        msg = f"Manifest not found: {manifest_path}"
+        raise ValueError(msg)
+
+    config_path = args.config.resolve()
+    if not config_path.exists():
+        msg = f"Config file not found: {config_path}"
+        raise ValueError(msg)
+
+    if args.timeout_seconds <= 0:
+        msg = "--timeout-seconds must be greater than 0"
+        raise ValueError(msg)
+
+    outdir = args.outdir.resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    manifest = _load_manifest(manifest_path)
+    selected_papers = _select_papers(manifest, args.max_files)
+
+    session_name = datetime.now().strftime("%Y%m%d-%H%M%S")
+    session_dir = outdir / "sessions" / session_name
+    downloads_dir = outdir / "downloads"
+    verify_inputs_dir = session_dir / "papers"
+    verify_outdir = session_dir / "verify"
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    download_results: list[dict[str, Any]] = []
+    for index, paper in enumerate(selected_papers, start=1):
+        print(f"[download {index}/{len(selected_papers)}] {paper['title']}")
+        result = _download_paper(
+            paper=paper,
+            downloads_dir=downloads_dir,
+            timeout_seconds=args.timeout_seconds,
+        )
+        download_results.append(result)
+        print(f"  -> {result['status']} ({paper['filename']})")
+        if result["status"] == "failed" and not args.continue_on_error:
+            break
+
+    staged_inputs = _stage_verify_inputs(download_results, verify_inputs_dir)
+
+    verify_payload: dict[str, Any] | None = None
+    if staged_inputs:
+        print("")
+        print("Running quick_verify_papers on downloaded PDFs...")
+        verify_args = _build_quick_verify_args(
+            papers_dir=verify_inputs_dir,
+            outdir=verify_outdir,
+            config_path=config_path,
+            continue_on_error=args.continue_on_error,
+        )
+        verify_payload = run_batch(verify_args)
+
+    combined_files = _combine_paper_results(
+        selected_papers=selected_papers,
+        download_results=download_results,
+        verify_payload=verify_payload,
+    )
+    verdict = _build_verdict(
+        selected_papers=selected_papers,
+        download_results=download_results,
+        verify_payload=verify_payload,
+    )
+
+    verify_totals = verify_payload["totals"] if verify_payload else {}
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "manifest_path": str(manifest_path),
+        "manifest_name": manifest["name"],
+        "manifest_description": manifest["description"],
+        "outdir": str(outdir),
+        "session_dir": str(session_dir),
+        "downloads_dir": str(downloads_dir),
+        "verify_inputs_dir": str(verify_inputs_dir),
+        "options": {
+            "max_files": args.max_files,
+            "timeout_seconds": args.timeout_seconds,
+            "continue_on_error": args.continue_on_error,
+            "config_path": str(config_path),
+        },
+        "totals": {
+            "manifest_papers": len(manifest["papers"]),
+            "selected_papers": len(selected_papers),
+            "download_success_count": sum(1 for item in download_results if item["status"] in ("downloaded", "reused")),
+            "download_failed_count": sum(1 for item in download_results if item["status"] == "failed"),
+            "verify_processed_count": verify_totals.get("pdfs_processed", 0),
+            "verify_success_count": verify_totals.get("success_count", 0),
+            "verify_failed_count": verify_totals.get("failed_count", 0),
+            "verify_wiki_output_count": verify_totals.get("wiki_output_count", 0),
+            # Explicit coverage counters (US-006)
+            "manifest_total": len(manifest["papers"]),
+            "selected_paper_count": len(selected_papers),
+            "downloaded_paper_count": sum(1 for item in download_results if item["status"] in ("downloaded", "reused")),
+            "verified_paper_count": verify_totals.get("pdfs_processed", 0),
+        },
+        "verdict": verdict,
+        "downloads": download_results,
+        "verification": {
+            "outdir": str(verify_outdir),
+            "summary_json_path": verify_payload.get("summary_json_path") if verify_payload else None,
+            "summary_md_path": verify_payload.get("summary_md_path") if verify_payload else None,
+            "payload": verify_payload,
+        },
+        "files": combined_files,
+    }
+
+    session_summary_json = session_dir / "summary.json"
+    session_summary_md = session_dir / "summary.md"
+    root_summary_json = outdir / "summary.json"
+    root_summary_md = outdir / "summary.md"
+
+    _write_summary_json(session_summary_json, payload)
+    _write_summary_json(root_summary_json, payload)
+    _write_summary_md(session_summary_md, payload)
+    _write_summary_md(root_summary_md, payload)
+
+    payload["summary_json_path"] = str(root_summary_json)
+    payload["summary_md_path"] = str(root_summary_md)
+    payload["session_summary_json_path"] = str(session_summary_json)
+    payload["session_summary_md_path"] = str(session_summary_md)
+
+    _write_summary_json(session_summary_json, payload)
+    _write_summary_json(root_summary_json, payload)
+
+    return payload
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = parse_args(argv)
+    payload = run_download_and_verify(args)
+    print("")
+    print(payload["verdict"]["headline"])
+    print(payload["verdict"]["answer"])
+    print(f"summary.json: {payload['summary_json_path']}")
+    print(f"summary.md: {payload['summary_md_path']}")
+    if payload["verification"]["summary_json_path"]:
+        print(f"quick verify summary.json: {payload['verification']['summary_json_path']}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

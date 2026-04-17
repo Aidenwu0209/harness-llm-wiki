@@ -481,3 +481,84 @@ def test_us005_markdown_includes_wiki_sparse_count(tmp_path: Path) -> None:
 
     md_text = (outdir / "summary.md").read_text(encoding="utf-8")
     assert "Wiki sparse" in md_text, "Missing Wiki sparse in markdown summary"
+
+
+# ---------------------------------------------------------------------------
+# US-006: Add coverage counters to batch verification outputs
+# ---------------------------------------------------------------------------
+
+
+def test_us006_summary_json_includes_coverage_counters(tmp_path: Path) -> None:
+    """AC1: summary.json must include manifest_total, selected_paper_count, downloaded_paper_count, verified_paper_count."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_dual_column_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "manifest_total" in totals
+    assert "selected_paper_count" in totals
+    assert "downloaded_paper_count" in totals
+    assert "verified_paper_count" in totals
+
+    # With 2 PDFs, no filtering
+    assert totals["manifest_total"] == 2
+    assert totals["selected_paper_count"] == 2
+    assert totals["downloaded_paper_count"] == 2
+    assert totals["verified_paper_count"] == 2
+
+
+def test_us006_markdown_includes_sample_coverage_section(tmp_path: Path) -> None:
+    """AC2: markdown summary must render a Sample Coverage section with the four counters."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Sample Coverage" in md_text
+    assert "Manifest total" in md_text
+    assert "Selected for this run" in md_text
+    assert "Available for verification" in md_text
+    assert "Verified" in md_text
+
+
+def test_us006_partial_batch_shows_subset_coverage(tmp_path: Path) -> None:
+    """AC3: a batch verifying only a subset must show clear subset numbers."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "01_attention.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "02_bert.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "03_clip.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(
+        str(papers_dir),
+        "--outdir", str(outdir),
+        "--max-files", "1",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    # manifest_total should be 3 (all PDFs in directory)
+    assert totals["manifest_total"] == 3
+    # selected_paper_count should be 1 (after --max-files 1)
+    assert totals["selected_paper_count"] == 1
+    # downloaded should equal selected (PDFs are local)
+    assert totals["downloaded_paper_count"] == 1
+    # verified should equal selected
+    assert totals["verified_paper_count"] == 1
+
+    # Markdown should show the subset clearly
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Manifest total: **3**" in md_text
+    assert "Selected for this run: **1**" in md_text
