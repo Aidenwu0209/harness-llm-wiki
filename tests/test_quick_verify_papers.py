@@ -151,6 +151,7 @@ def test_quick_verify_per_file_result_json_includes_verdict(tmp_path: Path) -> N
 # Import the pure classification function for direct unit testing.
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.quick_verify_papers import _classify_verdict  # noqa: E402
+from scripts.quick_verify_papers import _is_knowledge_sparse  # noqa: E402
 
 
 def test_us002_gate_passed_false_classified_as_quality_blocked() -> None:
@@ -287,3 +288,91 @@ def test_us003_markdown_includes_review_status_column(tmp_path: Path) -> None:
     md_text = (outdir / "summary.md").read_text(encoding="utf-8")
     assert "Review Status" in md_text, "Missing Review Status column in markdown summary"
     assert "Pending review" in md_text, "Missing Pending review count in markdown summary"
+
+
+# ---------------------------------------------------------------------------
+# US-004: Mark knowledge-sparse runs from empty extracted knowledge
+# ---------------------------------------------------------------------------
+
+
+def test_us004_all_zero_counts_marked_knowledge_sparse() -> None:
+    """AC1: entities=0, claims=0, relations=0 → knowledge_sparse=True."""
+    item = {
+        "counts": {"entities": 0, "claims": 0, "relations": 0},
+    }
+    assert _is_knowledge_sparse(item) is True
+
+
+def test_us004_non_zero_entities_not_knowledge_sparse() -> None:
+    """AC1: having at least some entities means NOT knowledge_sparse."""
+    item = {
+        "counts": {"entities": 1, "claims": 0, "relations": 0},
+    }
+    assert _is_knowledge_sparse(item) is False
+
+
+def test_us004_knowledge_sparse_counter_in_batch_summary(tmp_path: Path) -> None:
+    """AC2: batch summary must include knowledge_sparse_count."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "knowledge_sparse_count" in totals, "Missing knowledge_sparse_count in batch totals"
+    assert isinstance(totals["knowledge_sparse_count"], int)
+
+
+def test_us004_knowledge_sparse_coexists_with_verdict() -> None:
+    """AC3: knowledge_sparse signal is observable alongside the verdict tier."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": None,
+        "counts": {"entities": 0, "claims": 0, "relations": 0, "wiki_pages_exported": 5},
+    }
+    verdict = _classify_verdict(item)
+    ks = _is_knowledge_sparse(item)
+    # Knowledge-sparse does not change the verdict
+    assert verdict in _VALID_VERDICTS
+    # But the sparse signal is still True
+    assert ks is True
+
+
+def test_us004_knowledge_sparse_in_per_paper_result_json(tmp_path: Path) -> None:
+    """AC1+AC3: per-paper result.json must include knowledge_sparse field."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    runs_dir = outdir / "runs"
+    run_dirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+    assert len(run_dirs) >= 1
+
+    for run_dir in run_dirs:
+        result_json = run_dir / "result.json"
+        data = json.loads(result_json.read_text(encoding="utf-8"))
+        assert "knowledge_sparse" in data, f"Missing knowledge_sparse in {result_json}"
+        assert isinstance(data["knowledge_sparse"], bool)
+
+
+def test_us004_markdown_includes_knowledge_sparse_count(tmp_path: Path) -> None:
+    """AC2: markdown summary must show Knowledge sparse line."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Knowledge sparse" in md_text, "Missing Knowledge sparse in markdown summary"
