@@ -29,3 +29,14 @@
   - Use `pip install -i https://pypi.tuna.tsinghua.edu.cn/simple` for reliable package installs in China network
   - `python -m mypy docos/` is the canonical typecheck command (not `mypy docos/`)
 ---
+
+## 2026-04-18 00:58 - US-002
+- Verified that US-001's `_classify_verdict()` already correctly classifies gate-blocked papers as `quality_blocked`
+- Added 5 targeted tests for US-002 ACs: gate.passed=false → quality_blocked, blocked even with wiki pages, excluded from usable_wiki_ready tally, gate info preserved in per-paper payload, gate.passed=None edge case
+- All 6 ACs pass: mypy clean, 1044 tests pass
+- **Changed files:** `tests/test_quick_verify_papers.py`
+- **未来迭代的学习：**
+  - US-001's `_classify_verdict()` already covers US-002 and US-003 classification logic; later stories should focus on additional signals (knowledge_sparse, wiki_sparse) rather than reworking verdict classification
+  - `_classify_verdict` is a pure function that can be imported directly in tests via `sys.path.insert(0, str(REPO_ROOT))` then `from scripts.quick_verify_papers import _classify_verdict`
+  - `gate.passed` is `bool | None`; `None` means gate stage was never reached and should NOT be treated as blocked
+---
