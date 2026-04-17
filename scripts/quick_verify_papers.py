@@ -192,6 +192,18 @@ def _is_knowledge_sparse(item: dict[str, Any]) -> bool:
     )
 
 
+def _is_wiki_sparse(item: dict[str, Any]) -> bool:
+    """Return True when wiki export contains only source pages (no entity or concept pages)."""
+    wiki_pages: list[str] = item.get("artifacts", {}).get("wiki_pages", [])
+    if not wiki_pages:
+        return False
+    for page_path in wiki_pages:
+        parts = Path(page_path).parts
+        if "entities" in parts or "concepts" in parts:
+            return False
+    return True
+
+
 def _summarize_stage_statuses(manifest: Any) -> tuple[dict[str, str], dict[str, str]]:
     if manifest is None:
         return {}, {}
@@ -412,6 +424,7 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Usable wiki ready: **{totals['usable_wiki_ready_count']}**",
         f"- Pending review: **{totals['pending_review_count']}**",
         f"- Knowledge sparse: **{totals['knowledge_sparse_count']}**",
+        f"- Wiki sparse: **{totals['wiki_sparse_count']}**",
         "",
         "## Verdict",
         "",
@@ -529,6 +542,7 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
 
         file_result["verdict"] = _classify_verdict(file_result)
         file_result["knowledge_sparse"] = _is_knowledge_sparse(file_result)
+        file_result["wiki_sparse"] = _is_wiki_sparse(file_result)
 
         (run_root / "result.json").write_text(
             json.dumps(file_result, indent=2, ensure_ascii=False),
@@ -544,6 +558,7 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     wiki_output_count = sum(1 for item in results if item["counts"]["wiki_pages_exported"] > 0)
     pending_review_count = sum(1 for item in results if item.get("review_status") == "pending")
     knowledge_sparse_count = sum(1 for item in results if item.get("knowledge_sparse"))
+    wiki_sparse_count = sum(1 for item in results if item.get("wiki_sparse"))
 
     verdict_counts = Counter(item["verdict"] for item in results)
 
@@ -567,6 +582,7 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "wiki_output_count": wiki_output_count,
             "pending_review_count": pending_review_count,
             "knowledge_sparse_count": knowledge_sparse_count,
+            "wiki_sparse_count": wiki_sparse_count,
             "pipeline_runnable_count": verdict_counts.get("pipeline_runnable", 0),
             "quality_blocked_count": verdict_counts.get("quality_blocked", 0),
             "usable_wiki_ready_count": verdict_counts.get("usable_wiki_ready", 0),

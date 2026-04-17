@@ -152,6 +152,7 @@ def test_quick_verify_per_file_result_json_includes_verdict(tmp_path: Path) -> N
 sys.path.insert(0, str(REPO_ROOT))
 from scripts.quick_verify_papers import _classify_verdict  # noqa: E402
 from scripts.quick_verify_papers import _is_knowledge_sparse  # noqa: E402
+from scripts.quick_verify_papers import _is_wiki_sparse  # noqa: E402
 
 
 def test_us002_gate_passed_false_classified_as_quality_blocked() -> None:
@@ -376,3 +377,107 @@ def test_us004_markdown_includes_knowledge_sparse_count(tmp_path: Path) -> None:
 
     md_text = (outdir / "summary.md").read_text(encoding="utf-8")
     assert "Knowledge sparse" in md_text, "Missing Knowledge sparse in markdown summary"
+
+
+# ---------------------------------------------------------------------------
+# US-005: Mark wiki-sparse runs from source-only exports
+# ---------------------------------------------------------------------------
+
+
+def test_us005_source_only_pages_marked_wiki_sparse() -> None:
+    """AC1: wiki pages with only source pages (no entity/concept) → wiki_sparse=True."""
+    item = {
+        "artifacts": {
+            "wiki_pages": [
+                "/output/wiki_pages/001_paper/sources/attention-is-all-you-need.md",
+            ],
+        },
+    }
+    assert _is_wiki_sparse(item) is True
+
+
+def test_us005_entity_pages_not_wiki_sparse() -> None:
+    """AC1: having entity pages means NOT wiki_sparse."""
+    item = {
+        "artifacts": {
+            "wiki_pages": [
+                "/output/wiki_pages/001_paper/sources/attention-is-all-you-need.md",
+                "/output/wiki_pages/001_paper/entities/transformer.md",
+            ],
+        },
+    }
+    assert _is_wiki_sparse(item) is False
+
+
+def test_us005_concept_pages_not_wiki_sparse() -> None:
+    """AC1: having concept pages means NOT wiki_sparse."""
+    item = {
+        "artifacts": {
+            "wiki_pages": [
+                "/output/wiki_pages/001_paper/sources/attention-is-all-you-need.md",
+                "/output/wiki_pages/001_paper/concepts/self-attention.md",
+            ],
+        },
+    }
+    assert _is_wiki_sparse(item) is False
+
+
+def test_us005_no_wiki_pages_not_wiki_sparse() -> None:
+    """No exported pages → wiki_sparse=False (signal is only meaningful when pages exist)."""
+    item = {
+        "artifacts": {
+            "wiki_pages": [],
+        },
+    }
+    assert _is_wiki_sparse(item) is False
+
+
+def test_us005_wiki_sparse_counter_in_batch_summary(tmp_path: Path) -> None:
+    """AC2: batch summary must include wiki_sparse_count."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "wiki_sparse_count" in totals, "Missing wiki_sparse_count in batch totals"
+    assert isinstance(totals["wiki_sparse_count"], int)
+
+
+def test_us005_wiki_sparse_in_per_paper_result_json(tmp_path: Path) -> None:
+    """AC3: per-paper result.json must include wiki_sparse field."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    runs_dir = outdir / "runs"
+    run_dirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+    assert len(run_dirs) >= 1
+
+    for run_dir in run_dirs:
+        result_json = run_dir / "result.json"
+        data = json.loads(result_json.read_text(encoding="utf-8"))
+        assert "wiki_sparse" in data, f"Missing wiki_sparse in {result_json}"
+        assert isinstance(data["wiki_sparse"], bool)
+
+
+def test_us005_markdown_includes_wiki_sparse_count(tmp_path: Path) -> None:
+    """AC2: markdown summary must show Wiki sparse line."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Wiki sparse" in md_text, "Missing Wiki sparse in markdown summary"
