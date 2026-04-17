@@ -224,3 +224,66 @@ def test_us002_gate_passed_none_not_treated_as_blocked() -> None:
     }
     # None means gate stage never reached — should be pipeline_runnable, not quality_blocked
     assert _classify_verdict(item) == "pipeline_runnable"
+
+
+# ---------------------------------------------------------------------------
+# US-003: Classify pending-review runs as non-deliverable results
+# ---------------------------------------------------------------------------
+
+
+def test_us003_pending_review_not_usable_wiki_ready() -> None:
+    """AC1: review_status=pending must NOT be classified as usable_wiki_ready."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": "pending",
+        "counts": {"wiki_pages_exported": 5},
+    }
+    assert _classify_verdict(item) != "usable_wiki_ready"
+    assert _classify_verdict(item) == "quality_blocked"
+
+
+def test_us003_pending_review_counted_separately_in_batch_summary(tmp_path: Path) -> None:
+    """AC2: pending_review_count must appear as a separate counter in batch summary."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "pending_review_count" in totals, "Missing pending_review_count in batch totals"
+    assert isinstance(totals["pending_review_count"], int)
+
+
+def test_us003_per_paper_shows_verdict_and_review_status_together() -> None:
+    """AC3: per-paper payload must include both verdict and review_status fields."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": "pending",
+        "counts": {"wiki_pages_exported": 3},
+    }
+    verdict = _classify_verdict(item)
+    assert verdict == "quality_blocked"
+    # The per-paper dict carries both fields simultaneously
+    assert "review_status" in item
+    assert item["review_status"] == "pending"
+
+
+def test_us003_markdown_includes_review_status_column(tmp_path: Path) -> None:
+    """AC3: markdown summary must include Review Status column header."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Review Status" in md_text, "Missing Review Status column in markdown summary"
+    assert "Pending review" in md_text, "Missing Pending review count in markdown summary"

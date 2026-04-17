@@ -400,6 +400,7 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Pipeline runnable: **{totals['pipeline_runnable_count']}**",
         f"- Quality blocked: **{totals['quality_blocked_count']}**",
         f"- Usable wiki ready: **{totals['usable_wiki_ready_count']}**",
+        f"- Pending review: **{totals['pending_review_count']}**",
         "",
         "## Verdict",
         "",
@@ -424,8 +425,8 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         [
             "## Per Paper",
             "",
-            "| # | File | Verdict | Status | Failed Stage | Route | Wiki Pages | Run ID |",
-            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+            "| # | File | Verdict | Review Status | Status | Failed Stage | Route | Wiki Pages | Run ID |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
         ],
     )
 
@@ -435,8 +436,9 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         run_id = item["run_id"] or "-"
         wiki_pages = item["counts"]["wiki_pages_exported"]
         verdict_tier = item.get("verdict", "-")
+        review_status = item.get("review_status") or "-"
         lines.append(
-            f"| {item['index']} | {item['file_name']} | {verdict_tier} | {item['status']} | {failed_stage} | {route} | {wiki_pages} | {run_id} |",
+            f"| {item['index']} | {item['file_name']} | {verdict_tier} | {review_status} | {item['status']} | {failed_stage} | {route} | {wiki_pages} | {run_id} |",
         )
 
     lines.append("")
@@ -528,6 +530,7 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     success_count = sum(1 for item in results if item["status"] == "success")
     failed_count = sum(1 for item in results if item["status"] == "failed")
     wiki_output_count = sum(1 for item in results if item["counts"]["wiki_pages_exported"] > 0)
+    pending_review_count = sum(1 for item in results if item.get("review_status") == "pending")
 
     verdict_counts = Counter(item["verdict"] for item in results)
 
@@ -549,6 +552,7 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "success_count": success_count,
             "failed_count": failed_count,
             "wiki_output_count": wiki_output_count,
+            "pending_review_count": pending_review_count,
             "pipeline_runnable_count": verdict_counts.get("pipeline_runnable", 0),
             "quality_blocked_count": verdict_counts.get("quality_blocked", 0),
             "usable_wiki_ready_count": verdict_counts.get("usable_wiki_ready", 0),
