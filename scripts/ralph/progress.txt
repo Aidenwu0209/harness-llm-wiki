@@ -212,3 +212,30 @@
   - `sanitize_title()` preserves CJK and normal punctuation — only strips control chars, private-use, and replacement characters
   - Entity page tests use `_make_entity()` mock helper; concept pages take `concept_name` string directly
 ---
+
+## 2026-04-18 08:02 - US-015
+- Verified US-014's implementation already covers all US-015 ACs: `runner.py._stage_compile()` skips entity and concept candidates that fail `is_readable_title()` check
+- Added 21 targeted tests in `tests/test_unreadable_compile_skip_us015.py` covering all 3 ACs: compile-time skip gate, no output for unreadable candidates, deterministic behavior
+- Tests verify: garbage entity/concept names detected, readable names pass, CJK names readable, sanitized-empty names unreadable, compiler handles garbage without crash, determinism across 100 repeated calls
+- All ACs pass: mypy clean (46 source files), 1183 tests pass
+- **Changed files:** `tests/test_unreadable_compile_skip_us015.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - US-014 already implemented the runner-side readability gate — US-015's scope was primarily test coverage
+  - The `_stage_compile()` method applies `is_readable_title()` to both entity names and concept names before calling `compile_entity_page()` / `compile_concept_page()` — the compiler still compiles but the runner drops the result
+  - Pure garbage input sanitizes to empty string (`""`) — compiler produces frontmatter with empty title, but runner's `is_readable_title("")` returns `False`, so the page is never persisted
+---
+
+## 2026-04-18 08:15 - US-016
+- Added `dropped_unreadable_entity_count` and `dropped_unreadable_concept_count` fields to `RunManifest` model
+- Split `_dropped_unreadable_title` tracking in `runner.py._stage_compile()` into entity-level and concept-level counters (both still contribute to the total `dropped_unreadable_title_count`)
+- Surfaced `dropped_unreadable_title_count`, `dropped_unreadable_entity_count`, `dropped_unreadable_concept_count` in per-paper results and batch summary totals in `quick_verify_papers.py`
+- Added four dropped-count lines to markdown Verdict Tiers section
+- Ensured all filtered-count fields are present even when zero (including script-failure results via `setdefault`)
+- Added 6 targeted tests: summary JSON fields, per-paper result.json fields, markdown lines, fields-present-when-zero, script-failure-includes-zero, aggregate-totals-match-sum
+- All ACs pass: mypy clean (46 source files), 1189 tests pass
+- **Changed files:** `docos/models/run.py`, `docos/pipeline/runner.py`, `scripts/quick_verify_papers.py`, `tests/test_dropped_candidate_stats_us016.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `dropped_unreadable_title_count` is the combined total; `dropped_unreadable_entity_count` and `dropped_unreadable_concept_count` are the breakdown — both sum to equal the total
+  - `setdefault` pattern ensures script-failure results also get zero-valued dropped-count fields without special-casing the `_build_script_failure` constructor
+  - All three dropped-count dimensions (empty_slug, unreadable_title, entity/concept split) are additive in the manifest and quick_verify follows the same pattern as existing US-013 empty-slug tracking
+---
