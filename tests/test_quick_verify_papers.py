@@ -1973,3 +1973,306 @@ def test_us026_shared_vault_no_isolated_wiki_dirs(tmp_path: Path) -> None:
     assert not isolated_wiki_dir.exists(), (
         "In shared_corpus_vault mode, isolated per-paper wiki_pages/ directory must not be created"
     )
+
+
+# ---------------------------------------------------------------------------
+# US-029: Session-level delivery verdict
+# ---------------------------------------------------------------------------
+
+
+def test_us029_delivery_verdict_fully_deliverable() -> None:
+    """AC1: all papers usable_wiki_ready → fully_deliverable."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success"},
+        {"verdict": "usable_wiki_ready", "status": "success"},
+    ]
+    dv = _delivery_verdict(results)
+    assert dv["delivery_verdict"] == "fully_deliverable"
+    assert "2 of 2 papers produced usable wiki" in dv["delivery_summary"]
+    assert "0 papers blocked" in dv["delivery_summary"]
+    assert "pipeline-runnable but not wiki-ready: 0" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_partially_deliverable() -> None:
+    """AC1: some but not all papers usable_wiki_ready → partially_deliverable."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success"},
+        {"verdict": "quality_blocked", "status": "success"},
+        {"verdict": "pipeline_runnable", "status": "success"},
+    ]
+    dv = _delivery_verdict(results)
+    assert dv["delivery_verdict"] == "partially_deliverable"
+    assert "1 of 3 papers produced usable wiki" in dv["delivery_summary"]
+    assert "1 papers blocked" in dv["delivery_summary"]
+    assert "pipeline-runnable but not wiki-ready: 1" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_not_deliverable() -> None:
+    """AC1: no papers usable_wiki_ready → not_deliverable."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    results = [
+        {"verdict": "quality_blocked", "status": "success"},
+        {"verdict": "pipeline_runnable", "status": "success"},
+    ]
+    dv = _delivery_verdict(results)
+    assert dv["delivery_verdict"] == "not_deliverable"
+    assert "0 of 2 papers produced usable wiki" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_empty_results() -> None:
+    """Edge case: no results → not_deliverable."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    dv = _delivery_verdict([])
+    assert dv["delivery_verdict"] == "not_deliverable"
+
+
+def test_us029_delivery_verdict_blocked_paper_not_fully_deliverable() -> None:
+    """AC2: a session with blocked papers cannot be fully_deliverable even if all others are ready."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success"},
+        {"verdict": "quality_blocked", "status": "success"},
+        {"verdict": "usable_wiki_ready", "status": "success"},
+    ]
+    dv = _delivery_verdict(results)
+    assert dv["delivery_verdict"] == "partially_deliverable"
+    assert "1 papers blocked" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_separates_pipeline_runnable_from_wiki_ready() -> None:
+    """AC3: the summary text explicitly separates chain-runnable from usable-wiki status."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success"},
+        {"verdict": "pipeline_runnable", "status": "success"},
+        {"verdict": "pipeline_runnable", "status": "success"},
+    ]
+    dv = _delivery_verdict(results)
+    assert dv["delivery_verdict"] == "partially_deliverable"
+    assert "pipeline-runnable but not wiki-ready: 2" in dv["delivery_summary"]
+    assert "1 of 3 papers produced usable wiki" in dv["delivery_summary"]
+
+
+def test_us029_summary_json_includes_delivery_verdict(tmp_path: Path) -> None:
+    """AC1: summary.json must include delivery_verdict field."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "delivery_verdict" in payload, "Missing delivery_verdict in summary payload"
+    dv = payload["delivery_verdict"]
+    assert "delivery_verdict" in dv
+    assert "delivery_summary" in dv
+    assert dv["delivery_verdict"] in (
+        "fully_deliverable", "partially_deliverable", "not_deliverable",
+    )
+
+
+def test_us029_markdown_includes_delivery_verdict(tmp_path: Path) -> None:
+    """AC1: markdown must include Delivery Verdict section."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Delivery Verdict" in md_text, "Missing Delivery Verdict section in markdown"
+    assert "Session delivery status" in md_text, "Missing Session delivery status in markdown"
+    assert "papers produced usable wiki" in md_text, "Missing delivery summary in markdown"
+
+
+def test_us029_delivery_verdict_pending_review_not_fully_deliverable() -> None:
+    """AC2: a paper with pending review is classified quality_blocked, so not fully_deliverable."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    # pending_review is already captured by _classify_verdict as quality_blocked
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success"},
+        {"verdict": "quality_blocked", "status": "success"},
+    ]
+    dv = _delivery_verdict(results)
+    assert dv["delivery_verdict"] != "fully_deliverable"
+
+
+def test_us029_delivery_verdict_vault_validation_failure_not_fully_deliverable() -> None:
+    """AC2: a paper that fails vault validation is quality_blocked, so not fully_deliverable."""
+    from scripts.quick_verify_papers import _delivery_verdict
+
+    results = [
+        {"verdict": "quality_blocked", "status": "success"},
+    ]
+    dv = _delivery_verdict(results)
+    assert dv["delivery_verdict"] == "not_deliverable"
+
+
+# ---------------------------------------------------------------------------
+# US-028: Broader coverage reporting for classic-llm batch validation
+# ---------------------------------------------------------------------------
+
+
+def test_us028_coverage_funnel_markdown(tmp_path: Path) -> None:
+    """AC3: markdown shows coverage funnel for partial batches."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    for i in range(10):
+        (papers_dir / f"paper_{i:02d}.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(
+        str(papers_dir),
+        "--outdir", str(outdir),
+        "--max-files", "3",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "### Coverage Funnel" in md_text, "Missing Coverage Funnel section in markdown"
+    assert "`10` (manifest)" in md_text, "Missing manifest count in funnel"
+    assert "`3` (selected)" in md_text, "Missing selected count in funnel"
+
+
+def test_us028_coverage_counters_for_ten_papers(tmp_path: Path) -> None:
+    """AC1: coverage counters work correctly for 10-paper batches with subset selection."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    for i in range(10):
+        (papers_dir / f"paper_{i:02d}.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(
+        str(papers_dir),
+        "--outdir", str(outdir),
+        "--max-files", "3",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+
+    # AC2: manifest size clearly distinguished from papers processed
+    assert totals["manifest_total"] == 10
+    assert totals["selected_paper_count"] == 3
+    assert totals["downloaded_paper_count"] == 3
+    assert totals["verified_paper_count"] == 3
+
+    # AC1: verdict is not collapsed into binary pass/fail
+    verdict = payload["verdict"]
+    assert verdict["status"] in (
+        "basically_yes", "partial_yes", "quality_blocked", "not_yet",
+    )
+    assert verdict["headline"] not in ("pass", "fail", "PASS", "FAIL")
+
+
+def test_us028_partial_batch_sample_coverage_section(tmp_path: Path) -> None:
+    """AC2: markdown Sample Coverage section shows distinct counters for partial 10-paper batch."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    for i in range(10):
+        (papers_dir / f"paper_{i:02d}.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(
+        str(papers_dir),
+        "--outdir", str(outdir),
+        "--max-files", "3",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Sample Coverage" in md_text
+    assert "Manifest total: **10**" in md_text
+    assert "Selected for this run: **3**" in md_text
+    assert "Available for verification: **3**" in md_text
+    assert "Verified: **3**" in md_text
+
+
+def test_us028_render_coverage_funnel() -> None:
+    """Unit test: _render_coverage_funnel formats correctly for partial batch."""
+    from scripts.quick_verify_papers import _render_coverage_funnel
+
+    funnel = _render_coverage_funnel({
+        "manifest_total": 10,
+        "selected_paper_count": 3,
+        "downloaded_paper_count": 3,
+        "verified_paper_count": 2,
+    })
+    assert "`10` (manifest)" in funnel
+    assert "`3` (selected)" in funnel
+    assert "`3` (downloaded)" in funnel
+    assert "`2` (verified)" in funnel
+
+
+def test_us028_render_coverage_funnel_full_batch() -> None:
+    """Unit test: funnel shows equal numbers for a full batch."""
+    from scripts.quick_verify_papers import _render_coverage_funnel
+
+    funnel = _render_coverage_funnel({
+        "manifest_total": 10,
+        "selected_paper_count": 10,
+        "downloaded_paper_count": 10,
+        "verified_paper_count": 10,
+    })
+    assert "`10` (manifest)" in funnel
+    assert "`10` (verified)" in funnel
+
+
+def test_us028_full_batch_no_sample_warning_in_verdict() -> None:
+    """When all papers are verified, verdict should not mention sample limitations."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 5}},
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 2}},
+    ]
+    v = _build_verdict(results, manifest_total=3, verified_paper_count=3)
+    assert v["status"] == "basically_yes"
+    assert "样本" not in v["answer"]
+
+
+def test_us028_partial_batch_verdict_mentions_sample() -> None:
+    """AC3: partial batch verdict explicitly notes the conclusion is limited to the sample."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results, manifest_total=10, verified_paper_count=1)
+    assert "1/10" in v["answer"]
+    assert "样本" in v["answer"] or "范围" in v["answer"]
+
+
+def test_us028_ten_paper_per_paper_table_rows(tmp_path: Path) -> None:
+    """AC1: per-paper table in markdown works correctly for 10 papers."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    for i in range(10):
+        (papers_dir / f"paper_{i:02d}.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(
+        str(papers_dir),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert len(payload["files"]) == 10
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    # Count per-paper rows in the markdown table (lines starting with "|")
+    table_rows = [line for line in md_text.splitlines() if line.startswith("|") and not line.startswith("| ---")]
+    # Header row + 10 paper rows = 11 rows
+    assert len(table_rows) == 11, f"Expected 11 table rows (1 header + 10 papers), got {len(table_rows)}"

@@ -916,3 +916,449 @@ def test_us027_download_and_verify_session_summary_includes_recommended_paths(tm
     for payload in (root_payload, session_payload):
         assert "recommended_vault_path" in payload
         assert "recommended_start_page" in payload
+
+
+# ---------------------------------------------------------------------------
+# US-029: Session-level delivery verdict for download-and-verify
+# ---------------------------------------------------------------------------
+
+
+def test_us029_delivery_verdict_fully_deliverable() -> None:
+    """AC1: all papers usable_wiki_ready → fully_deliverable."""
+    from scripts.download_and_verify_papers import _delivery_verdict
+
+    download_results = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+    ]
+    verify_payload = {
+        "files": [
+            {"verdict": "usable_wiki_ready", "status": "success"},
+            {"verdict": "usable_wiki_ready", "status": "success"},
+        ],
+    }
+    dv = _delivery_verdict(download_results, verify_payload)
+    assert dv["delivery_verdict"] == "fully_deliverable"
+    assert "2 of 2 papers produced usable wiki" in dv["delivery_summary"]
+    assert "0 papers blocked" in dv["delivery_summary"]
+    assert "pipeline-runnable but not wiki-ready: 0" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_partially_deliverable() -> None:
+    """AC1: some papers usable_wiki_ready → partially_deliverable."""
+    from scripts.download_and_verify_papers import _delivery_verdict
+
+    download_results = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+        {"status": "downloaded", "filename": "c.pdf"},
+    ]
+    verify_payload = {
+        "files": [
+            {"verdict": "usable_wiki_ready", "status": "success"},
+            {"verdict": "quality_blocked", "status": "success"},
+            {"verdict": "pipeline_runnable", "status": "success"},
+        ],
+    }
+    dv = _delivery_verdict(download_results, verify_payload)
+    assert dv["delivery_verdict"] == "partially_deliverable"
+    assert "1 of 3 papers produced usable wiki" in dv["delivery_summary"]
+    assert "1 papers blocked" in dv["delivery_summary"]
+    assert "pipeline-runnable but not wiki-ready: 1" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_not_deliverable() -> None:
+    """AC1: no papers usable_wiki_ready → not_deliverable."""
+    from scripts.download_and_verify_papers import _delivery_verdict
+
+    download_results = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+    ]
+    verify_payload = {
+        "files": [
+            {"verdict": "quality_blocked", "status": "success"},
+            {"verdict": "pipeline_runnable", "status": "success"},
+        ],
+    }
+    dv = _delivery_verdict(download_results, verify_payload)
+    assert dv["delivery_verdict"] == "not_deliverable"
+    assert "0 of 2 papers produced usable wiki" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_no_verify_payload() -> None:
+    """Edge case: verify_payload is None → not_deliverable."""
+    from scripts.download_and_verify_papers import _delivery_verdict
+
+    download_results = [
+        {"status": "downloaded", "filename": "a.pdf"},
+    ]
+    dv = _delivery_verdict(download_results, None)
+    assert dv["delivery_verdict"] == "not_deliverable"
+
+
+def test_us029_delivery_verdict_no_downloads() -> None:
+    """Edge case: no successful downloads → not_deliverable."""
+    from scripts.download_and_verify_papers import _delivery_verdict
+
+    download_results = [
+        {"status": "failed", "filename": "a.pdf"},
+    ]
+    dv = _delivery_verdict(download_results, None)
+    assert dv["delivery_verdict"] == "not_deliverable"
+
+
+def test_us029_delivery_verdict_blocked_paper_not_fully_deliverable() -> None:
+    """AC2: blocked papers prevent fully_deliverable even when all others are ready."""
+    from scripts.download_and_verify_papers import _delivery_verdict
+
+    download_results = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+        {"status": "downloaded", "filename": "c.pdf"},
+    ]
+    verify_payload = {
+        "files": [
+            {"verdict": "usable_wiki_ready", "status": "success"},
+            {"verdict": "quality_blocked", "status": "success"},
+            {"verdict": "usable_wiki_ready", "status": "success"},
+        ],
+    }
+    dv = _delivery_verdict(download_results, verify_payload)
+    assert dv["delivery_verdict"] == "partially_deliverable"
+    assert "1 papers blocked" in dv["delivery_summary"]
+
+
+def test_us029_delivery_verdict_separates_pipeline_runnable_from_wiki_ready() -> None:
+    """AC3: summary text explicitly separates pipeline-runnable from usable-wiki."""
+    from scripts.download_and_verify_papers import _delivery_verdict
+
+    download_results = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+        {"status": "downloaded", "filename": "c.pdf"},
+    ]
+    verify_payload = {
+        "files": [
+            {"verdict": "usable_wiki_ready", "status": "success"},
+            {"verdict": "pipeline_runnable", "status": "success"},
+            {"verdict": "pipeline_runnable", "status": "success"},
+        ],
+    }
+    dv = _delivery_verdict(download_results, verify_payload)
+    assert dv["delivery_verdict"] == "partially_deliverable"
+    assert "pipeline-runnable but not wiki-ready: 2" in dv["delivery_summary"]
+    assert "1 of 3 papers produced usable wiki" in dv["delivery_summary"]
+
+
+def test_us029_summary_json_includes_delivery_verdict(tmp_path: Path) -> None:
+    """AC1: summary.json must include delivery_verdict field."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    beta = source_dir / "beta.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+    beta.write_bytes(_build_dual_column_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha, beta])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "delivery_verdict" in payload, "Missing delivery_verdict in download-and-verify summary"
+    dv = payload["delivery_verdict"]
+    assert "delivery_verdict" in dv
+    assert "delivery_summary" in dv
+    assert dv["delivery_verdict"] in (
+        "fully_deliverable", "partially_deliverable", "not_deliverable",
+    )
+
+
+def test_us029_session_summary_includes_delivery_verdict(tmp_path: Path) -> None:
+    """AC1: both root and session summaries must include delivery_verdict."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    root_payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+
+    sessions_dir = outdir / "sessions"
+    assert sessions_dir.exists()
+    session_dirs = list(sessions_dir.iterdir())
+    assert len(session_dirs) == 1
+    session_payload = json.loads(
+        (session_dirs[0] / "summary.json").read_text(encoding="utf-8"),
+    )
+
+    for payload in (root_payload, session_payload):
+        assert "delivery_verdict" in payload
+        assert payload["delivery_verdict"]["delivery_verdict"] in (
+            "fully_deliverable", "partially_deliverable", "not_deliverable",
+        )
+
+
+def test_us029_markdown_includes_delivery_verdict(tmp_path: Path) -> None:
+    """AC1: markdown must include Delivery Verdict section."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Delivery Verdict" in md_text, "Missing Delivery Verdict section in markdown"
+    assert "Session delivery status" in md_text, "Missing Session delivery status in markdown"
+    assert "papers produced usable wiki" in md_text, "Missing delivery summary in markdown"
+
+
+# ---------------------------------------------------------------------------
+# US-028: Broader coverage reporting for classic-llm batch validation
+# ---------------------------------------------------------------------------
+
+
+def test_us028_ten_paper_manifest_coverage_counters(tmp_path: Path) -> None:
+    """AC1: Batch summaries can represent coverage for a 10-paper manifest."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    pdfs = []
+    for i in range(10):
+        pdf = source_dir / f"paper_{i:02d}.pdf"
+        pdf.write_bytes(_build_simple_pdf())
+        pdfs.append(pdf)
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, pdfs)
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+        "--max-files", "3",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+
+    # AC1: counters exist and represent the full manifest
+    assert "manifest_total" in totals
+    assert "selected_paper_count" in totals
+    assert "downloaded_paper_count" in totals
+    assert "verified_paper_count" in totals
+
+    # AC2: manifest size clearly distinguished from papers processed
+    assert totals["manifest_total"] == 10
+    assert totals["selected_paper_count"] == 3
+    assert totals["downloaded_paper_count"] == 3
+    assert totals["verified_paper_count"] == 3
+
+    # AC1: verdict is not collapsed into binary pass/fail
+    verdict = payload["verdict"]
+    assert verdict["status"] in (
+        "basically_yes", "partial_yes", "quality_blocked", "not_yet",
+    )
+    # Verdict must include actual counts, not just "pass" or "fail"
+    assert verdict["headline"] not in ("pass", "fail", "PASS", "FAIL")
+
+
+def test_us028_partial_batch_coverage_funnel_markdown(tmp_path: Path) -> None:
+    """AC3: markdown shows coverage funnel for partial batches without implying full validation."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    pdfs = []
+    for i in range(10):
+        pdf = source_dir / f"paper_{i:02d}.pdf"
+        pdf.write_bytes(_build_simple_pdf())
+        pdfs.append(pdf)
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, pdfs)
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+        "--max-files", "3",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+
+    # Coverage Funnel section must be present
+    assert "### Coverage Funnel" in md_text, "Missing Coverage Funnel section in markdown"
+
+    # Funnel must show the exact numbers, not collapsed
+    assert "`10` (manifest)" in md_text, "Missing manifest count in funnel"
+    assert "`3` (selected)" in md_text, "Missing selected count in funnel"
+    assert "`3` (downloaded)" in md_text, "Missing downloaded count in funnel"
+
+
+def test_us028_partial_batch_verdict_mentions_coverage_gap() -> None:
+    """AC3: _build_verdict for partial batch must note the coverage gap."""
+    verify_payload = {
+        "verdict": {"status": "basically_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 3,
+            "success_count": 3,
+            "usable_wiki_ready_count": 3,
+            "quality_blocked_count": 0,
+            "pending_review_count": 0,
+            "gate_pass_rate": 1.0,
+        },
+    }
+    selected = [{"id": f"p{i}"} for i in range(3)]
+    downloads = [
+        {"status": "downloaded", "filename": f"a{i}.pdf"}
+        for i in range(3)
+    ]
+
+    verdict = _build_verdict(
+        selected, downloads, verify_payload,
+        manifest_total=10,
+    )
+    # With only 3/10 papers selected, the verdict must acknowledge partial coverage
+    assert "3/10" in verdict["answer"] or "仅覆盖" in verdict["answer"] or "manifest" in verdict["answer"].lower()
+
+
+def test_us028_full_batch_no_coverage_gap_note() -> None:
+    """When selected == manifest_total, no partial-coverage note is emitted."""
+    verify_payload = {
+        "verdict": {"status": "basically_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 3,
+            "success_count": 3,
+            "usable_wiki_ready_count": 3,
+            "quality_blocked_count": 0,
+            "pending_review_count": 0,
+            "gate_pass_rate": 1.0,
+        },
+    }
+    selected = [{"id": f"p{i}"} for i in range(3)]
+    downloads = [
+        {"status": "downloaded", "filename": f"a{i}.pdf"}
+        for i in range(3)
+    ]
+
+    verdict = _build_verdict(
+        selected, downloads, verify_payload,
+        manifest_total=3,
+    )
+    assert verdict["status"] == "basically_yes"
+    assert "仅覆盖" not in verdict["answer"]
+
+
+def test_us028_render_coverage_funnel() -> None:
+    """Unit test: _render_coverage_funnel formats correctly for partial batch."""
+    from scripts.download_and_verify_papers import _render_coverage_funnel
+
+    funnel = _render_coverage_funnel({
+        "manifest_total": 10,
+        "selected_paper_count": 3,
+        "downloaded_paper_count": 2,
+        "verified_paper_count": 2,
+    })
+    assert "`10` (manifest)" in funnel
+    assert "`3` (selected)" in funnel
+    assert "`2` (downloaded)" in funnel
+    assert "`2` (verified)" in funnel
+
+
+def test_us028_render_coverage_funnel_full_batch() -> None:
+    """Unit test: funnel shows equal numbers for a full batch."""
+    from scripts.download_and_verify_papers import _render_coverage_funnel
+
+    funnel = _render_coverage_funnel({
+        "manifest_total": 10,
+        "selected_paper_count": 10,
+        "downloaded_paper_count": 10,
+        "verified_paper_count": 10,
+    })
+    assert "`10` (manifest)" in funnel
+    assert "`10` (verified)" in funnel
+
+
+def test_us028_ten_paper_manifest_sample_coverage_section(tmp_path: Path) -> None:
+    """AC2: markdown Sample Coverage section shows distinct counters for 10-paper manifest."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    pdfs = []
+    for i in range(10):
+        pdf = source_dir / f"paper_{i:02d}.pdf"
+        pdf.write_bytes(_build_simple_pdf())
+        pdfs.append(pdf)
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, pdfs)
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+        "--max-files", "3",
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Sample Coverage" in md_text
+    assert "Manifest total: **10**" in md_text
+    assert "Selected for this run: **3**" in md_text
+    assert "Downloaded successfully: **3**" in md_text
+    assert "Verified: **3**" in md_text
+
+
+def test_us028_classic_llm_10_manifest_loads() -> None:
+    """AC1: configs/paper_sets/classic_llm_10.yaml can be loaded and parsed."""
+    from scripts.download_and_verify_papers import _load_manifest
+
+    manifest_path = REPO_ROOT / "configs" / "paper_sets" / "classic_llm_10.yaml"
+    assert manifest_path.exists(), "classic_llm_10.yaml must exist"
+
+    manifest = _load_manifest(manifest_path)
+    assert manifest["name"] == "classic_llm_10"
+    assert len(manifest["papers"]) == 10
+
+    # Each paper must have required fields
+    for i, paper in enumerate(manifest["papers"], start=1):
+        assert "id" in paper, f"Paper #{i} missing id"
+        assert "title" in paper, f"Paper #{i} missing title"
+        assert "filename" in paper, f"Paper #{i} missing filename"
+        assert "pdf_url" in paper, f"Paper #{i} missing pdf_url"
+        assert paper["filename"].endswith(".pdf"), f"Paper #{i} filename must end with .pdf"
+
+
+def test_us028_ten_paper_select_subset_coverage() -> None:
+    """AC3: selecting a subset of a 10-paper manifest shows clear coverage gaps in JSON."""
+    from scripts.download_and_verify_papers import _select_papers
+
+    manifest = {
+        "papers": [{"id": f"p{i}", "title": f"Paper {i}", "filename": f"{i}.pdf", "pdf_url": f"http://example.com/{i}.pdf"} for i in range(10)],
+    }
+    selected = _select_papers(manifest, max_files=3)
+    assert len(selected) == 3
+    assert len(manifest["papers"]) == 10  # original manifest unchanged

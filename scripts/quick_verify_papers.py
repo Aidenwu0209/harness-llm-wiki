@@ -507,6 +507,50 @@ def _build_verdict(
     }
 
 
+def _delivery_verdict(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute a session-level delivery verdict from per-paper results.
+
+    Returns a dict with:
+    - ``delivery_verdict``: one of ``"fully_deliverable"``,
+      ``"partially_deliverable"``, or ``"not_deliverable"``.
+    - ``delivery_summary``: human-readable summary separating
+      pipeline-runnable status from usable-wiki status.
+    """
+    total = len(results)
+    if total == 0:
+        return {
+            "delivery_verdict": "not_deliverable",
+            "delivery_summary": "没有论文被处理，无法判断交付状态。",
+        }
+
+    usable = sum(1 for item in results if item.get("verdict") == "usable_wiki_ready")
+    blocked = sum(1 for item in results if item.get("verdict") == "quality_blocked")
+    runnable = sum(1 for item in results if item.get("verdict") == "pipeline_runnable")
+
+    # A paper cannot be usable_wiki_ready if it has blocked status,
+    # pending review, empty filenames, or failed vault validation.
+    # (These are already captured by _classify_verdict, so we only
+    # need to aggregate here.)
+
+    if usable == total and blocked == 0:
+        verdict = "fully_deliverable"
+    elif usable > 0:
+        verdict = "partially_deliverable"
+    else:
+        verdict = "not_deliverable"
+
+    summary = (
+        f"{usable} of {total} papers produced usable wiki; "
+        f"{blocked} papers blocked; "
+        f"pipeline-runnable but not wiki-ready: {runnable}"
+    )
+
+    return {
+        "delivery_verdict": verdict,
+        "delivery_summary": summary,
+    }
+
+
 def _failure_stage_histogram(results: list[dict[str, Any]]) -> dict[str, int]:
     counter = Counter()
     for item in results:
@@ -585,6 +629,19 @@ def _derive_recommended_paths(
     return recommended_vault, recommended_start_page
 
 
+def _render_coverage_funnel(totals: dict[str, Any]) -> str:
+    """Render a coverage funnel line showing manifest -> selected -> downloaded -> verified.
+
+    This makes partial-batch gaps immediately visible without requiring the
+    reader to cross-reference multiple separate counters.
+    """
+    manifest = totals.get("manifest_total", 0)
+    selected = totals.get("selected_paper_count", 0)
+    downloaded = totals.get("downloaded_paper_count", 0)
+    verified = totals.get("verified_paper_count", 0)
+    return f"`{manifest}` (manifest) -> `{selected}` (selected) -> `{downloaded}` (downloaded) -> `{verified}` (verified)"
+
+
 def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
     totals = payload["totals"]
     verdict = payload["verdict"]
@@ -608,6 +665,10 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Selected for this run: **{totals['selected_paper_count']}**",
         f"- Available for verification: **{totals['downloaded_paper_count']}**",
         f"- Verified: **{totals['verified_paper_count']}**",
+        "",
+        "### Coverage Funnel",
+        "",
+        _render_coverage_funnel(totals),
         "",
         "## Run Outcomes",
         "",
@@ -644,6 +705,19 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         verdict["answer"],
         "",
     ]
+
+    # US-029: Delivery verdict in markdown
+    delivery = payload.get("delivery_verdict", {})
+    if delivery:
+        lines.extend(
+            [
+                "## Delivery Verdict",
+                "",
+                f"- Session delivery status: **{delivery.get('delivery_verdict', 'N/A')}**",
+                f"- {delivery.get('delivery_summary', '')}",
+                "",
+            ],
+        )
 
     # US-024: Isolated-mode disclaimer in markdown
     if payload.get("verification_mode") == "isolated_per_paper":
@@ -1001,6 +1075,7 @@ def run_batch(args: argparse.Namespace, *, verification_mode: str = "isolated_pe
             verified_paper_count=len(results),
             verification_mode=verification_mode,
         ),
+        "delivery_verdict": _delivery_verdict(results),
         "files": results,
     }
 

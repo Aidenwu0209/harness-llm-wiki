@@ -310,6 +310,7 @@ def _build_verdict(
     verify_payload: dict[str, Any] | None,
     *,
     verification_mode: str = "isolated_per_paper",
+    manifest_total: int = 0,
 ) -> dict[str, str]:
     """Build a quality-aware top-level verdict for download-and-verify.
 
@@ -321,12 +322,21 @@ def _build_verdict(
     When *verification_mode* is ``"isolated_per_paper"`` (the default), verdict
     text is scoped to per-paper pipeline validation and explicitly notes that
     a unified shared vault was **not** validated.
+
+    When *manifest_total* is greater than the number of selected papers,
+    the verdict text explicitly notes partial coverage so the reader does
+    not mistake a subset run for a full-manifest validation.
     """
     selected_count = len(selected_papers)
     download_success_count = sum(1 for item in download_results if item["status"] in ("downloaded", "reused"))
     download_failed_count = sum(1 for item in download_results if item["status"] == "failed")
 
     is_isolated = verification_mode == "isolated_per_paper"
+
+    # Partial-coverage note (US-028)
+    partial_coverage_note = ""
+    if manifest_total > 0 and selected_count < manifest_total:
+        partial_coverage_note = f" 本次运行仅覆盖 manifest 中 {selected_count}/{manifest_total} 篇论文。"
 
     # Isolated-mode disclaimer appended to every non-empty answer
     isolated_disclaimer = ""
@@ -338,19 +348,28 @@ def _build_verdict(
             return {
                 "status": "not_yet",
                 "headline": "这次未形成有效验证样本",
-                "answer": "选中的论文没有成功下载到可验证输入，因此还不能回答系统是否具备逐论文管线转 wiki 的能力。",
+                "answer": (
+                    "选中的论文没有成功下载到可验证输入，因此还不能回答系统是否具备逐论文管线转 wiki 的能力。"
+                    f"{partial_coverage_note}{isolated_disclaimer}"
+                ).rstrip(),
             }
         return {
             "status": "not_yet",
             "headline": "这次未形成有效验证样本",
-            "answer": "选中的论文没有成功下载到可验证输入，因此还不能回答系统是否具备一键转 wiki 的能力。",
+            "answer": (
+                "选中的论文没有成功下载到可验证输入，因此还不能回答系统是否具备一键转 wiki 的能力。"
+                f"{partial_coverage_note}{isolated_disclaimer}"
+            ).rstrip(),
         }
 
     if verify_payload is None:
         return {
             "status": "partial_yes" if download_failed_count else "not_yet",
             "headline": "下载阶段部分完成，但验证阶段没有真正跑起来",
-            "answer": "已经拿到部分 PDF，但这次没有形成 quick verify 结果，因此无法给出可靠结论。",
+            "answer": (
+                "已经拿到部分 PDF，但这次没有形成 quick verify 结果，因此无法给出可靠结论。"
+                f"{partial_coverage_note}{isolated_disclaimer}"
+            ).rstrip(),
         }
 
     # Extract quality signals from quick-verify totals
@@ -394,7 +413,7 @@ def _build_verdict(
             "status": "basically_yes",
             "headline": headline,
             "answer": (
-                f"下载全部成功，{usable_wiki_ready} 篇论文均通过质量门禁并导出了可用 wiki 页面。{gate_note}{_page_usability_note()}{isolated_disclaimer}"
+                f"下载全部成功，{usable_wiki_ready} 篇论文均通过质量门禁并导出了可用 wiki 页面。{gate_note}{_page_usability_note()}{partial_coverage_note}{isolated_disclaimer}"
             ).rstrip(),
         }
 
@@ -412,7 +431,7 @@ def _build_verdict(
                 f"{usable_wiki_ready} 篇达到可用 wiki 标准，"
                 f"{quality_blocked} 篇被质量阻断，"
                 f"{pending_review} 篇待审核。"
-                f"{_page_usability_note()}{isolated_disclaimer}"
+                f"{_page_usability_note()}{partial_coverage_note}{isolated_disclaimer}"
             ).rstrip(),
         }
 
@@ -428,7 +447,7 @@ def _build_verdict(
                 f"{coverage_prefix}"
                 f"{quality_blocked} 篇被质量门禁阻断，"
                 f"{pending_review} 篇待审核。"
-                f"{page_note}{_page_usability_note()}{isolated_disclaimer}"
+                f"{page_note}{_page_usability_note()}{partial_coverage_note}{isolated_disclaimer}"
             ).rstrip(),
         }
 
@@ -441,9 +460,80 @@ def _build_verdict(
         "headline": "下载与验证均未形成稳定结论",
         "answer": (
             f"{coverage_prefix}"
-            f"{tail}{isolated_disclaimer}"
+            f"{tail}{partial_coverage_note}{isolated_disclaimer}"
         ).rstrip(),
     }
+
+
+def _delivery_verdict(
+    download_results: list[dict[str, Any]],
+    verify_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compute a session-level delivery verdict from download + verify results.
+
+    Returns a dict with:
+    - ``delivery_verdict``: one of ``"fully_deliverable"``,
+      ``"partially_deliverable"``, or ``"not_deliverable"``.
+    - ``delivery_summary``: human-readable summary separating
+      pipeline-runnable status from usable-wiki status.
+    """
+    download_success = sum(
+        1 for item in download_results if item["status"] in ("downloaded", "reused")
+    )
+    total_downloaded = len(download_results)
+
+    if verify_payload is None or download_success == 0:
+        return {
+            "delivery_verdict": "not_deliverable",
+            "delivery_summary": (
+                f"0 of {total_downloaded} papers produced usable wiki; "
+                f"0 papers blocked; "
+                f"pipeline-runnable but not wiki-ready: {total_downloaded}"
+            ),
+        }
+
+    verify_files = verify_payload.get("files", [])
+    total = len(verify_files)
+    if total == 0:
+        return {
+            "delivery_verdict": "not_deliverable",
+            "delivery_summary": "没有论文被验证，无法判断交付状态。",
+        }
+
+    usable = sum(1 for item in verify_files if item.get("verdict") == "usable_wiki_ready")
+    blocked = sum(1 for item in verify_files if item.get("verdict") == "quality_blocked")
+    runnable = sum(1 for item in verify_files if item.get("verdict") == "pipeline_runnable")
+
+    if usable == total and blocked == 0:
+        verdict = "fully_deliverable"
+    elif usable > 0:
+        verdict = "partially_deliverable"
+    else:
+        verdict = "not_deliverable"
+
+    summary = (
+        f"{usable} of {total} papers produced usable wiki; "
+        f"{blocked} papers blocked; "
+        f"pipeline-runnable but not wiki-ready: {runnable}"
+    )
+
+    return {
+        "delivery_verdict": verdict,
+        "delivery_summary": summary,
+    }
+
+
+def _render_coverage_funnel(totals: dict[str, Any]) -> str:
+    """Render a coverage funnel line showing manifest -> selected -> downloaded -> verified.
+
+    This makes partial-batch gaps immediately visible without requiring the
+    reader to cross-reference multiple separate counters.
+    """
+    manifest = totals.get("manifest_total", 0)
+    selected = totals.get("selected_paper_count", 0)
+    downloaded = totals.get("downloaded_paper_count", 0)
+    verified = totals.get("verified_paper_count", 0)
+    return f"`{manifest}` (manifest) -> `{selected}` (selected) -> `{downloaded}` (downloaded) -> `{verified}` (verified)"
 
 
 def _write_summary_json(path: Path, payload: dict[str, Any]) -> None:
@@ -477,6 +567,10 @@ def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
         f"- Downloaded successfully: **{totals['downloaded_paper_count']}**",
         f"- Verified: **{totals['verified_paper_count']}**",
         "",
+        "### Coverage Funnel",
+        "",
+        _render_coverage_funnel(totals),
+        "",
         "## Run Outcomes",
         "",
         f"- Download failures: **{totals['download_failed_count']}**",
@@ -506,6 +600,19 @@ def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
         verdict["answer"],
         "",
     ]
+
+    # US-029: Delivery verdict in markdown
+    delivery = payload.get("delivery_verdict", {})
+    if delivery:
+        lines.extend(
+            [
+                "## Delivery Verdict",
+                "",
+                f"- Session delivery status: **{delivery.get('delivery_verdict', 'N/A')}**",
+                f"- {delivery.get('delivery_summary', '')}",
+                "",
+            ],
+        )
 
     # US-024: Isolated-mode disclaimer in markdown
     if payload.get("verification_mode") == "isolated_per_paper":
@@ -626,6 +733,7 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
         download_results=download_results,
         verify_payload=verify_payload,
         verification_mode=effective_mode,
+        manifest_total=len(manifest["papers"]),
     )
 
     verify_totals = verify_payload["totals"] if verify_payload else {}
@@ -695,6 +803,7 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
             "vault_validation_failed_pages": verify_totals.get("vault_validation_failed_pages", 0),
         },
         "verdict": verdict,
+        "delivery_verdict": _delivery_verdict(download_results, verify_payload),
         "downloads": download_results,
         "verification": {
             "outdir": str(verify_outdir),
