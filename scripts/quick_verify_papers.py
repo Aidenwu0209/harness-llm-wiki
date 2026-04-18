@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from docos.artifact_stores import ReportStore, WikiStore
 from docos.pipeline.runner import PipelineRunner
 from docos.run_store import RunStore
+from docos.vault_validator import validate_vault
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -531,6 +532,21 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
             lines.append(f"- `{stage}`: {count}")
         lines.append("")
 
+    # US-020: Vault validation section
+    vt = totals
+    if vt.get("vault_validation_total_pages", 0) > 0:
+        lines.extend(
+            [
+                "## Vault Validation",
+                "",
+                f"- Total pages validated: **{vt['vault_validation_total_pages']}**",
+                f"- Passed: **{vt['vault_validation_passed_pages']}**",
+                f"- Failed: **{vt['vault_validation_failed_pages']}**",
+                f"- Pass rate: **{_fmt_rate(vt.get('vault_pass_rate'))}**",
+                "",
+            ],
+        )
+
     lines.extend(
         [
             "## Per Paper",
@@ -595,6 +611,7 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
         workspace.mkdir(parents=True, exist_ok=True)
 
         print(f"[{index}/{len(selected_pdfs)}] {pdf_path.name}")
+        wiki_root = outdir / "wiki_pages" / paper_label
         try:
             runner = PipelineRunner(base_dir=workspace, config_path=config_path)
             pipeline_result = runner.run(
@@ -603,8 +620,6 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
                 tags=["quick-verify"],
             )
             manifest = _load_manifest(workspace, pipeline_result.run_id or None)
-
-            wiki_root = outdir / "wiki_pages" / paper_label
             _export_result = _export_wiki_pages(workspace, wiki_root)
             wiki_pages = _export_result["exported"]
             _export_filtered = _export_result["filtered_empty_slug"]
@@ -639,6 +654,10 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
                 error_message=str(exc),
             )
             print(f"  -> failed (script: {exc})")
+
+        # US-020: Run Obsidian-ready validator on exported vault
+        _vault_result = validate_vault(wiki_root)
+        file_result["vault_validation"] = _vault_result.to_dict()
 
         file_result["verdict"] = _classify_verdict(file_result)
         file_result["knowledge_sparse"] = _is_knowledge_sparse(file_result)
@@ -699,6 +718,20 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
         item["page_buckets"]["final_vault_ready_pages"] for item in results
     )
 
+    # US-020: Aggregate vault validation statistics
+    vault_validation_total_pages = sum(
+        item.get("vault_validation", {}).get("total_pages", 0) for item in results
+    )
+    vault_validation_passed_pages = sum(
+        item.get("vault_validation", {}).get("passed_pages", 0) for item in results
+    )
+    vault_validation_failed_pages = sum(
+        item.get("vault_validation", {}).get("failed_pages", 0) for item in results
+    )
+    vault_pass_rate: float | None = None
+    if vault_validation_total_pages > 0:
+        vault_pass_rate = round(vault_validation_passed_pages / vault_validation_total_pages, 4)
+
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "repo_root": str(REPO_ROOT),
@@ -741,6 +774,11 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "dropped_unreadable_title_count": dropped_unreadable_title_total,
             "dropped_unreadable_entity_count": dropped_unreadable_entity_total,
             "dropped_unreadable_concept_count": dropped_unreadable_concept_total,
+            # US-020: Aggregate vault validation
+            "vault_validation_total_pages": vault_validation_total_pages,
+            "vault_validation_passed_pages": vault_validation_passed_pages,
+            "vault_validation_failed_pages": vault_validation_failed_pages,
+            "vault_pass_rate": vault_pass_rate,
         },
         "failure_stage_histogram": _failure_stage_histogram(results),
         "verdict": _build_verdict(
