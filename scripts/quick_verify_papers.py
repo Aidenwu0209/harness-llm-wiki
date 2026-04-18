@@ -190,6 +190,11 @@ def _classify_verdict(item: dict[str, Any]) -> str:
     if gate_passed is False or review_status == "pending":
         return "quality_blocked"
 
+    # US-021: Paper that fails Obsidian-ready validation cannot be usable_wiki_ready
+    vault_validation = item.get("vault_validation", {})
+    if vault_validation.get("failed_pages", 0) > 0:
+        return "quality_blocked"
+
     if gate_passed is True and wiki_pages_exported > 0:
         return "usable_wiki_ready"
 
@@ -543,6 +548,8 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
                 f"- Passed: **{vt['vault_validation_passed_pages']}**",
                 f"- Failed: **{vt['vault_validation_failed_pages']}**",
                 f"- Pass rate: **{_fmt_rate(vt.get('vault_pass_rate'))}**",
+                f"- Papers passed validation: **{vt.get('vault_validated_paper_pass_count', 0)}**",
+                f"- Papers failed validation: **{vt.get('vault_validated_paper_fail_count', 0)}**",
                 "",
             ],
         )
@@ -732,6 +739,17 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     if vault_validation_total_pages > 0:
         vault_pass_rate = round(vault_validation_passed_pages / vault_validation_total_pages, 4)
 
+    # US-021: Paper-level validator pass/fail counts
+    vault_validated_paper_pass_count = sum(
+        1 for item in results
+        if item.get("vault_validation", {}).get("total_pages", 0) > 0
+        and item.get("vault_validation", {}).get("failed_pages", 0) == 0
+    )
+    vault_validated_paper_fail_count = sum(
+        1 for item in results
+        if item.get("vault_validation", {}).get("failed_pages", 0) > 0
+    )
+
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "repo_root": str(REPO_ROOT),
@@ -779,6 +797,9 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "vault_validation_passed_pages": vault_validation_passed_pages,
             "vault_validation_failed_pages": vault_validation_failed_pages,
             "vault_pass_rate": vault_pass_rate,
+            # US-021: Paper-level validator pass/fail counts
+            "vault_validated_paper_pass_count": vault_validated_paper_pass_count,
+            "vault_validated_paper_fail_count": vault_validated_paper_fail_count,
         },
         "failure_stage_histogram": _failure_stage_histogram(results),
         "verdict": _build_verdict(

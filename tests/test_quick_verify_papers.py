@@ -972,3 +972,134 @@ def test_us010_zero_pages_all_buckets_zero(tmp_path: Path) -> None:
     if payload["totals"]["generated_candidate_pages"] == 0:
         assert payload["totals"]["gate_passed_pages"] == 0
         assert payload["totals"]["final_vault_ready_pages"] == 0
+
+
+# ---------------------------------------------------------------------------
+# US-021: Integrate validator results into quick-verify summaries
+# ---------------------------------------------------------------------------
+
+
+def test_us021_vault_validation_failure_blocks_usable_wiki_ready() -> None:
+    """AC2: A paper that fails Obsidian-ready validation cannot be usable_wiki_ready."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 5},
+        "vault_validation": {
+            "total_pages": 3,
+            "passed_pages": 1,
+            "failed_pages": 2,
+            "pass_rate": 0.3333,
+            "issues": [
+                {"page_path": "entities/test.md", "issue_type": "empty_title", "detail": "..."},
+            ],
+        },
+    }
+    assert _classify_verdict(item) == "quality_blocked"
+
+
+def test_us021_vault_validation_all_pass_is_usable_wiki_ready() -> None:
+    """AC2: Paper with all pages passing vault validation can be usable_wiki_ready."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 5},
+        "vault_validation": {
+            "total_pages": 5,
+            "passed_pages": 5,
+            "failed_pages": 0,
+            "pass_rate": 1.0,
+            "issues": [],
+        },
+    }
+    assert _classify_verdict(item) == "usable_wiki_ready"
+
+
+def test_us021_no_vault_validation_data_allows_usable_wiki_ready() -> None:
+    """AC2: Missing vault_validation (e.g. no pages exported) does not block."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 3},
+    }
+    # No vault_validation key — should still reach usable_wiki_ready
+    assert _classify_verdict(item) == "usable_wiki_ready"
+
+
+def test_us021_zero_failed_pages_allows_usable_wiki_ready() -> None:
+    """AC2: vault_validation with failed_pages=0 does not block usable_wiki_ready."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 3},
+        "vault_validation": {
+            "total_pages": 3,
+            "passed_pages": 3,
+            "failed_pages": 0,
+            "pass_rate": 1.0,
+            "issues": [],
+        },
+    }
+    assert _classify_verdict(item) == "usable_wiki_ready"
+
+
+def test_us021_summary_json_includes_paper_level_validator_counts(tmp_path: Path) -> None:
+    """AC1: summary.json totals must include vault_validated_paper_pass_count and vault_validated_paper_fail_count."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "vault_validated_paper_pass_count" in totals
+    assert "vault_validated_paper_fail_count" in totals
+    assert isinstance(totals["vault_validated_paper_pass_count"], int)
+    assert isinstance(totals["vault_validated_paper_fail_count"], int)
+
+
+def test_us021_per_paper_json_includes_vault_validation_status(tmp_path: Path) -> None:
+    """AC3: per-paper result.json must include vault_validation dict."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    runs_dir = outdir / "runs"
+    run_dirs = [d for d in runs_dir.iterdir() if d.is_dir()]
+    assert len(run_dirs) >= 1
+
+    for run_dir in run_dirs:
+        result_json = run_dir / "result.json"
+        data = json.loads(result_json.read_text(encoding="utf-8"))
+        assert "vault_validation" in data, f"Missing vault_validation in {result_json}"
+        vv = data["vault_validation"]
+        assert "total_pages" in vv
+        assert "passed_pages" in vv
+        assert "failed_pages" in vv
+        assert "pass_rate" in vv
+
+
+def test_us021_markdown_includes_paper_level_validator_counts(tmp_path: Path) -> None:
+    """AC1: markdown must show paper-level validator pass/fail counts."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Papers passed validation" in md_text, "Missing Papers passed validation in markdown"
+    assert "Papers failed validation" in md_text, "Missing Papers failed validation in markdown"
