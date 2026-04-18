@@ -26,6 +26,7 @@ from docos.models.docir import (
     Relation,
     RelationType,
 )
+from docos.slugify import sanitize_title
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +236,11 @@ class GlobalRepair:
         relations = list(docir.relations)
         warnings = list(docir.warnings)
 
+        # Sanitize heading/title text BEFORE downstream repairs and extraction.
+        # This ensures control characters and binary garbage never reach the
+        # knowledge extraction stage (stage 5).
+        blocks = self._sanitize_heading_title_text(blocks, repair_log)
+
         blocks = self._normalize_heading_hierarchy(blocks, repair_log)
         blocks = self._remove_repeated_headers_footers(blocks, repair_log)
         blocks, relations = self._link_cross_page_continuation(blocks, relations, repair_log)
@@ -293,6 +299,43 @@ class GlobalRepair:
                 )
             )
         return rebuilt
+
+    def _sanitize_heading_title_text(
+        self, blocks: list[Block], log: RepairLog
+    ) -> list[Block]:
+        """Sanitize text in HEADING and TITLE blocks.
+
+        Applies :func:`docos.slugify.sanitize_title` to ``text_plain`` and
+        ``text_md`` of heading and title blocks so that downstream extraction
+        (stage 5) consumes cleaned candidates instead of raw unfiltered values.
+        """
+        result: list[Block] = []
+        for b in blocks:
+            if b.block_type not in (BlockType.HEADING, BlockType.TITLE):
+                result.append(b)
+                continue
+
+            cleaned_plain = sanitize_title(b.text_plain)
+            cleaned_md = sanitize_title(b.text_md)
+
+            if cleaned_plain == b.text_plain and cleaned_md == b.text_md:
+                result.append(b)
+                continue
+
+            log.add(RepairRecord(
+                repair_type="heading_title_text_sanitized",
+                before=b.text_plain[:80],
+                after=cleaned_plain[:80],
+                reason="Control characters or binary garbage removed from heading/title candidate",
+                confidence=1.0,
+                performed_by="rule",
+            ))
+            result.append(Block(**{
+                **b.model_dump(),
+                "text_plain": cleaned_plain,
+                "text_md": cleaned_md,
+            }))
+        return result
 
     def _normalize_heading_hierarchy(
         self, blocks: list[Block], log: RepairLog
