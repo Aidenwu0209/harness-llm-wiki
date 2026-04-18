@@ -297,3 +297,16 @@
   - US-021 will use `vault_validation` results to prevent `usable_wiki_ready` classification when validation fails
   - `_parse_frontmatter_title()` is a lightweight parser that avoids importing yaml — it just scans for `title:` line in the frontmatter block
 ---
+
+## 2026-04-18 09:46 - US-021
+- Modified `_classify_verdict()` to check `vault_validation.failed_pages > 0` — papers with vault validation failures are now classified as `quality_blocked` instead of `usable_wiki_ready`
+- Added paper-level validator pass/fail counts (`vault_validated_paper_pass_count`, `vault_validated_paper_fail_count`) to batch summary totals
+- Added "Papers passed validation" and "Papers failed validation" lines to markdown Vault Validation section
+- Added 7 targeted tests: vault failure blocks usable_wiki_ready, all-pass allows usable_wiki_ready, missing vault_validation does not block, zero failed pages ok, paper-level counts in summary JSON, per-paper vault_validation dict, markdown paper-level lines
+- All ACs pass: mypy clean (47 source files), 1250 tests pass
+- **Changed files:** `scripts/quick_verify_papers.py`, `tests/test_quick_verify_papers.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `_classify_verdict()` now has three blocking conditions in order: gate_passed=False / review_status=pending, then vault_validation.failed_pages > 0, then the usable_wiki_ready positive check
+  - Paper-level validator counts: a paper "passes" validation if it has pages AND failed_pages == 0; a paper "fails" if failed_pages > 0; papers with 0 pages exported are neither pass nor fail
+  - `vault_validation` is available in `_classify_verdict()` because validation runs BEFORE verdict classification in `run_batch()` — this ordering was established by US-020 and must be preserved
+---
