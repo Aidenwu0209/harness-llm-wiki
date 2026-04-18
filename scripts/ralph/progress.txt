@@ -283,3 +283,17 @@
   - US-018 and US-019 both test the same extraction gate but from different perspectives: US-018 focuses on entity extraction broadly, US-019 focuses specifically on concept (heading-based) candidates
   - When testing concept entities specifically, filter by `EntityType.CONCEPT` to isolate concept-level behavior from document-level behavior
 ---
+
+## 2026-04-18 21:00 - US-020
+- Created `docos/vault_validator.py` with `validate_vault()` that scans exported wiki pages and detects: empty filenames, unreadable slugs (non-ASCII-safe chars), empty frontmatter titles, control characters in titles, abnormally long or garbled page names (>200 chars or low readability ratio)
+- Integrated validator into `quick_verify_papers.py`: runs on each paper's exported vault, per-paper result includes `vault_validation` dict, batch summary includes aggregate stats (total/passed/failed pages, pass rate), markdown output has "Vault Validation" section
+- Added 23 targeted tests covering all 3 ACs: frontmatter parsing, individual issue types (empty filename, unreadable slug, empty title, control chars, long name), aggregate result computation, to_dict serialization, multiple issues per page, mixed quality pages
+- All ACs pass: mypy clean (47 source files), 1243 tests pass
+- **Changed files:** `docos/vault_validator.py`, `scripts/quick_verify_papers.py`, `tests/test_vault_validator_us020.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `validate_vault()` takes a `Path` and scans all `.md` files recursively — works on both populated and empty/nonexistent directories
+  - Vault validation runs AFTER export but BEFORE verdict classification, so `vault_validation` dict is available in per-paper result alongside `verdict`, `knowledge_sparse`, etc.
+  - `wiki_root` was moved before the `try` block in `run_batch()` to ensure it's available for both success and failure paths
+  - US-021 will use `vault_validation` results to prevent `usable_wiki_ready` classification when validation fails
+  - `_parse_frontmatter_title()` is a lightweight parser that avoids importing yaml — it just scans for `title:` line in the frontmatter block
+---
