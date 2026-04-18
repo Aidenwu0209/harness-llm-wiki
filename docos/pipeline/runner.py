@@ -474,6 +474,8 @@ class PipelineRunner:
             page_types: list[str] = []
             _dropped_empty_slug: int = 0
             _dropped_unreadable_title: int = 0
+            _dropped_unreadable_entity: int = 0
+            _dropped_unreadable_concept: int = 0
 
             from docos.slugify import is_readable_title
 
@@ -507,6 +509,7 @@ class PipelineRunner:
             for entity in entities:
                 if not is_readable_title(entity.canonical_name):
                     _dropped_unreadable_title += 1
+                    _dropped_unreadable_entity += 1
                     continue
                 efm, ebody, epath = compiler.compile_entity_page(entity, claims)
                 if not _is_valid_page_path(epath):
@@ -540,6 +543,7 @@ class PipelineRunner:
             for concept_name in concept_names:
                 if not is_readable_title(concept_name):
                     _dropped_unreadable_title += 1
+                    _dropped_unreadable_concept += 1
                     continue
                 related_entities = [e for e in entities if e.canonical_name == concept_name]
                 related_claims = [c for c in claims if
@@ -618,6 +622,8 @@ class PipelineRunner:
             manifest.compiled_deleted_count = page_types.count("delete")
             manifest.dropped_empty_slug_count = _dropped_empty_slug
             manifest.dropped_unreadable_title_count = _dropped_unreadable_title
+            manifest.dropped_unreadable_entity_count = _dropped_unreadable_entity
+            manifest.dropped_unreadable_concept_count = _dropped_unreadable_concept
 
             manifest.mark_stage("compile", StageStatus.COMPLETED)
             self._run_store.update(manifest)

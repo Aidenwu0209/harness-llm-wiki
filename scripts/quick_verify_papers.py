@@ -502,6 +502,9 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Knowledge sparse: **{totals['knowledge_sparse_count']}**",
         f"- Wiki sparse: **{totals['wiki_sparse_count']}**",
         f"- Dropped empty slug: **{totals.get('dropped_empty_slug_count', 0)}**",
+        f"- Dropped unreadable title: **{totals.get('dropped_unreadable_title_count', 0)}**",
+        f"- Dropped unreadable entity: **{totals.get('dropped_unreadable_entity_count', 0)}**",
+        f"- Dropped unreadable concept: **{totals.get('dropped_unreadable_concept_count', 0)}**",
         "",
         "## Quality Metrics",
         "",
@@ -619,6 +622,11 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             # US-013: Surface empty-slug rejection counts (compile + export)
             _manifest_dropped = getattr(manifest, "dropped_empty_slug_count", 0) or 0
             file_result["dropped_empty_slug_count"] = _manifest_dropped + _export_filtered
+
+            # US-016: Surface dropped/filtered candidate statistics
+            file_result["dropped_unreadable_title_count"] = getattr(manifest, "dropped_unreadable_title_count", 0) or 0
+            file_result["dropped_unreadable_entity_count"] = getattr(manifest, "dropped_unreadable_entity_count", 0) or 0
+            file_result["dropped_unreadable_concept_count"] = getattr(manifest, "dropped_unreadable_concept_count", 0) or 0
             print(
                 f"  -> {file_result['status']}"
                 f" (run_id={file_result['run_id'] or '-'}, failed_stage={file_result['failed_stage'] or '-'})",
@@ -635,6 +643,12 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
         file_result["verdict"] = _classify_verdict(file_result)
         file_result["knowledge_sparse"] = _is_knowledge_sparse(file_result)
         file_result["wiki_sparse"] = _is_wiki_sparse(file_result)
+
+        # US-016: Ensure filtered-count fields always present (even for script failures)
+        file_result.setdefault("dropped_empty_slug_count", 0)
+        file_result.setdefault("dropped_unreadable_title_count", 0)
+        file_result.setdefault("dropped_unreadable_entity_count", 0)
+        file_result.setdefault("dropped_unreadable_concept_count", 0)
 
         # US-010: Per-paper page-count buckets
         _wiki_count = file_result["counts"]["wiki_pages_exported"]
@@ -660,6 +674,9 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     knowledge_sparse_count = sum(1 for item in results if item.get("knowledge_sparse"))
     wiki_sparse_count = sum(1 for item in results if item.get("wiki_sparse"))
     dropped_empty_slug_total = sum(item.get("dropped_empty_slug_count", 0) for item in results)
+    dropped_unreadable_title_total = sum(item.get("dropped_unreadable_title_count", 0) for item in results)
+    dropped_unreadable_entity_total = sum(item.get("dropped_unreadable_entity_count", 0) for item in results)
+    dropped_unreadable_concept_total = sum(item.get("dropped_unreadable_concept_count", 0) for item in results)
 
     # US-009: Aggregate quality metrics
     gate_evaluated = [item for item in results if item.get("gate", {}).get("passed") is not None]
@@ -720,6 +737,10 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             "verified_paper_count": len(results),
             # US-013: Empty-slug rejections (compile + export)
             "dropped_empty_slug_count": dropped_empty_slug_total,
+            # US-016: Dropped/filtered candidate statistics
+            "dropped_unreadable_title_count": dropped_unreadable_title_total,
+            "dropped_unreadable_entity_count": dropped_unreadable_entity_total,
+            "dropped_unreadable_concept_count": dropped_unreadable_concept_total,
         },
         "failure_stage_histogram": _failure_stage_histogram(results),
         "verdict": _build_verdict(
