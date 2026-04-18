@@ -132,11 +132,24 @@ def _render_markdown(frontmatter: dict[str, Any], body: str) -> str:
     return f"---\n{yaml_block}\n---\n\n{body.rstrip()}\n"
 
 
-def _export_wiki_pages(workspace: Path, wiki_root: Path) -> dict[str, Any]:
+def _export_wiki_pages(
+    workspace: Path,
+    wiki_root: Path,
+    *,
+    paper_label: str | None = None,
+    source_file_name: str | None = None,
+) -> dict[str, Any]:
     """Export wiki pages, rejecting empty-slug filenames.
 
     Returns a dict with ``exported`` (list of written paths) and
     ``filtered_empty_slug`` (count of pages blocked due to empty slug).
+
+    When *paper_label* is provided the pages are placed under a
+    ``<wiki_root>/<paper_label>/`` subdirectory and each page's
+    frontmatter receives ``paper_label`` and ``source_file`` metadata
+    for traceability.  When *paper_label* is ``None`` (default), the
+    previous behaviour is preserved — pages are written directly under
+    *wiki_root*.
     """
     wiki_store = WikiStore(workspace / "wiki_state")
     exported: list[str] = []
@@ -160,10 +173,24 @@ def _export_wiki_pages(workspace: Path, wiki_root: Path) -> dict[str, Any]:
             filtered_empty_slug += 1
             continue
 
-        dest_path = wiki_root / relative_path
+        # Build destination path — optionally nested under paper_label.
+        if paper_label is not None:
+            dest_path = wiki_root / paper_label / relative_path
+        else:
+            dest_path = wiki_root / relative_path
         dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Inject traceability metadata into frontmatter when exporting
+        # into a shared vault.
+        frontmatter = state.frontmatter
+        if paper_label is not None:
+            frontmatter = dict(frontmatter)
+            frontmatter["paper_label"] = paper_label
+            if source_file_name:
+                frontmatter["source_file"] = source_file_name
+
         dest_path.write_text(
-            _render_markdown(state.frontmatter, state.body),
+            _render_markdown(frontmatter, state.body),
             encoding="utf-8",
         )
         exported.append(str(dest_path))
@@ -504,6 +531,60 @@ def _write_summary_json(outdir: Path, payload: dict[str, Any]) -> Path:
     return summary_path
 
 
+def _find_first_source_page(exported_paths: list[str]) -> str | None:
+    """Return the first source page path from a list of exported wiki page paths.
+
+    A source page is identified by having ``sources`` in its path parts.
+    If no source page is found, returns the first exported path, or None
+    if the list is empty.
+    """
+    if not exported_paths:
+        return None
+    for page_path in exported_paths:
+        parts = Path(page_path).parts
+        if "sources" in parts:
+            return page_path
+    return exported_paths[0]
+
+
+def _derive_recommended_paths(
+    results: list[dict[str, Any]],
+) -> tuple[str | None, str | None]:
+    """Derive recommended vault path and start page from batch results.
+
+    Returns a tuple of (recommended_vault_path, recommended_start_page).
+    Both are None when no wiki pages were exported.
+    """
+    # Collect all wiki page dirs and exported page paths
+    vault_dirs: set[str] = set()
+    all_exported: list[str] = []
+
+    for item in results:
+        wiki_pages_dir = item.get("artifacts", {}).get("wiki_pages_dir")
+        if wiki_pages_dir:
+            vault_dirs.add(wiki_pages_dir)
+        wiki_pages = item.get("artifacts", {}).get("wiki_pages", [])
+        all_exported.extend(wiki_pages)
+
+    if not all_exported:
+        return None, None
+
+    # Recommended vault path: the common parent if all share one, otherwise first dir
+    if len(vault_dirs) == 1:
+        recommended_vault = vault_dirs.pop()
+    elif vault_dirs:
+        # Find common parent of all vault dirs
+        sorted_dirs = sorted(vault_dirs)
+        recommended_vault = str(Path(sorted_dirs[0]).parent)
+    else:
+        recommended_vault = None
+
+    # Recommended start page: first source page from exported pages
+    recommended_start_page = _find_first_source_page(all_exported)
+
+    return recommended_vault, recommended_start_page
+
+
 def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
     totals = payload["totals"]
     verdict = payload["verdict"]
@@ -515,6 +596,11 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Config: `{payload['config_path']}`",
         f"- Output dir: `{payload['outdir']}`",
         f"- Verification mode: **{payload['verification_mode']}**",
+        "",
+        "## Recommended Paths",
+        "",
+        f"- Recommended vault path: `{payload.get('recommended_vault_path') or 'N/A'}`",
+        f"- Recommended start page: `{payload.get('recommended_start_page') or 'N/A'}`",
         "",
         "## Sample Coverage",
         "",
@@ -657,6 +743,12 @@ def run_batch(args: argparse.Namespace, *, verification_mode: str = "isolated_pe
 
     results: list[dict[str, Any]] = []
 
+    # US-025: In shared mode all wiki pages go into a single vault root.
+    shared_wiki_root: Path | None = None
+    if verification_mode == "shared_corpus_vault":
+        shared_wiki_root = outdir / "shared_vault"
+        shared_wiki_root.mkdir(parents=True, exist_ok=True)
+
     for index, pdf_path in enumerate(selected_pdfs, start=1):
         paper_label = f"{index:03d}_{_slug(pdf_path.stem)}"
         run_root = outdir / "runs" / paper_label
@@ -673,8 +765,21 @@ def run_batch(args: argparse.Namespace, *, verification_mode: str = "isolated_pe
                 tags=["quick-verify"],
             )
             manifest = _load_manifest(workspace, pipeline_result.run_id or None)
-            _export_result = _export_wiki_pages(workspace, wiki_root)
-            wiki_pages = _export_result["exported"]
+
+            # US-025: Export to shared vault or per-paper directory.
+            if shared_wiki_root is not None:
+                _export_result = _export_wiki_pages(
+                    workspace,
+                    shared_wiki_root,
+                    paper_label=paper_label,
+                    source_file_name=pdf_path.name,
+                )
+                wiki_pages = _export_result["exported"]
+                # Point wiki_root at shared root for result tracking.
+                wiki_root = shared_wiki_root
+            else:
+                _export_result = _export_wiki_pages(workspace, wiki_root)
+                wiki_pages = _export_result["exported"]
             _export_filtered = _export_result["filtered_empty_slug"]
 
             file_result = _build_file_result(
@@ -815,6 +920,21 @@ def run_batch(args: argparse.Namespace, *, verification_mode: str = "isolated_pe
     if vault_validation_total_pages > 0:
         readable_page_rate = round(_readable_pages / vault_validation_total_pages, 4)
 
+    # US-027: Derive recommended vault path and start page
+    recommended_vault_path, recommended_start_page = _derive_recommended_paths(results)
+
+    # US-026: Shared-vault summary fields
+    shared_vault_total_pages = 0
+    shared_vault_paper_count = 0
+    if shared_wiki_root is not None:
+        shared_vault_total_pages = sum(
+            item["counts"]["wiki_pages_exported"] for item in results
+        )
+        shared_vault_paper_count = sum(
+            1 for item in results
+            if item["counts"]["wiki_pages_exported"] > 0
+        )
+
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "repo_root": str(REPO_ROOT),
@@ -822,6 +942,11 @@ def run_batch(args: argparse.Namespace, *, verification_mode: str = "isolated_pe
         "config_path": str(config_path),
         "outdir": str(outdir),
         "verification_mode": verification_mode,
+        "recommended_vault_path": recommended_vault_path,
+        "recommended_start_page": recommended_start_page,
+        "shared_vault_root": str(shared_wiki_root) if shared_wiki_root is not None else None,
+        "shared_vault_total_pages": shared_vault_total_pages,
+        "shared_vault_paper_count": shared_vault_paper_count,
         "options": {
             "pattern": args.pattern,
             "max_files": args.max_files,

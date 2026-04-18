@@ -810,3 +810,109 @@ def test_us022_build_verdict_partial_yes_includes_page_rates() -> None:
     assert verdict["status"] == "partial_yes"
     # Answer should reference page-level usability when vault pages exist
     assert "页面级可用性" in verdict["answer"]
+
+
+# ---------------------------------------------------------------------------
+# US-027: Propagate recommended vault path and start page in summaries
+# ---------------------------------------------------------------------------
+
+
+def test_us027_download_and_verify_includes_recommended_vault_path(tmp_path: Path) -> None:
+    """AC1: download-and-verify summary.json must include recommended_vault_path."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "recommended_vault_path" in payload, "Missing recommended_vault_path in download-and-verify summary"
+
+    # When wiki pages are exported, the path should be non-None
+    if payload["totals"].get("verify_wiki_output_count", 0) > 0:
+        assert payload["recommended_vault_path"] is not None
+
+
+def test_us027_download_and_verify_includes_recommended_start_page(tmp_path: Path) -> None:
+    """AC2: download-and-verify summary.json must include recommended_start_page."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "recommended_start_page" in payload, "Missing recommended_start_page in download-and-verify summary"
+
+
+def test_us027_download_and_verify_markdown_includes_recommended_paths(tmp_path: Path) -> None:
+    """AC3: markdown summary must render recommended vault path and start page."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Recommended Paths" in md_text, "Missing Recommended Paths section in markdown"
+    assert "Recommended vault path" in md_text, "Missing Recommended vault path in markdown"
+    assert "Recommended start page" in md_text, "Missing Recommended start page in markdown"
+
+
+def test_us027_download_and_verify_session_summary_includes_recommended_paths(tmp_path: Path) -> None:
+    """AC3: both root and session summary files contain recommended path fields."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    root_payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+
+    sessions_dir = outdir / "sessions"
+    assert sessions_dir.exists()
+    session_dirs = list(sessions_dir.iterdir())
+    assert len(session_dirs) == 1
+    session_payload = json.loads(
+        (session_dirs[0] / "summary.json").read_text(encoding="utf-8"),
+    )
+
+    for payload in (root_payload, session_payload):
+        assert "recommended_vault_path" in payload
+        assert "recommended_start_page" in payload

@@ -465,6 +465,11 @@ def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
         f"- Session dir: `{payload['session_dir']}`",
         f"- Verification mode: **{payload['verification_mode']}**",
         "",
+        "## Recommended Paths",
+        "",
+        f"- Recommended vault path: `{payload.get('recommended_vault_path') or 'N/A'}`",
+        f"- Recommended start page: `{payload.get('recommended_start_page') or 'N/A'}`",
+        "",
         "## Sample Coverage",
         "",
         f"- Manifest total: **{totals['manifest_total']}**",
@@ -639,6 +644,10 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
         else None
     )
 
+    # US-027: Propagate recommended vault path and start page from quick-verify
+    recommended_vault_path = verify_payload.get("recommended_vault_path") if verify_payload else None
+    recommended_start_page = verify_payload.get("recommended_start_page") if verify_payload else None
+
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "manifest_path": str(manifest_path),
@@ -647,6 +656,8 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
         "outdir": str(outdir),
         "session_dir": str(session_dir),
         "verification_mode": effective_mode,
+        "recommended_vault_path": recommended_vault_path,
+        "recommended_start_page": recommended_start_page,
         "downloads_dir": str(downloads_dir),
         "verify_inputs_dir": str(verify_inputs_dir),
         "options": {

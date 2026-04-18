@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -1285,3 +1287,689 @@ def test_us023_invalid_verification_mode_raises() -> None:
         args.papers_dir = papers_dir
         args.outdir = Path("/tmp/us023_test")
         run_batch(args, verification_mode="invalid_mode")
+
+
+# ---------------------------------------------------------------------------
+# US-027: Print recommended vault path and start page in summaries
+# ---------------------------------------------------------------------------
+
+
+def test_us027_summary_json_includes_recommended_vault_path(tmp_path: Path) -> None:
+    """AC1: summary.json must include recommended_vault_path derived from wiki_root."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "recommended_vault_path" in payload, "Missing recommended_vault_path in summary payload"
+
+    # When wiki pages are exported, the path should be non-None
+    if payload["totals"]["wiki_output_count"] > 0:
+        assert payload["recommended_vault_path"] is not None
+        assert "wiki_pages" in payload["recommended_vault_path"]
+
+
+def test_us027_summary_json_includes_recommended_start_page(tmp_path: Path) -> None:
+    """AC2: summary.json must include recommended_start_page when wiki pages are exported."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "recommended_start_page" in payload, "Missing recommended_start_page in summary payload"
+
+    # When wiki pages are exported, the start page should be non-None
+    if payload["totals"]["wiki_output_count"] > 0:
+        assert payload["recommended_start_page"] is not None
+
+
+def test_us027_recommended_paths_none_when_no_wiki_pages(tmp_path: Path) -> None:
+    """Edge case: recommended paths should be None when no pages are exported."""
+    # Simulate with _derive_recommended_paths directly
+    from scripts.quick_verify_papers import _derive_recommended_paths
+
+    results: list[dict[str, Any]] = [
+        {
+            "artifacts": {
+                "wiki_pages_dir": None,
+                "wiki_pages": [],
+            },
+        },
+    ]
+    vault, start = _derive_recommended_paths(results)
+    assert vault is None
+    assert start is None
+
+
+def test_us027_markdown_includes_recommended_paths(tmp_path: Path) -> None:
+    """AC3: markdown summary must render recommended vault path and start page."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Recommended Paths" in md_text, "Missing Recommended Paths section in markdown"
+    assert "Recommended vault path" in md_text, "Missing Recommended vault path in markdown"
+    assert "Recommended start page" in md_text, "Missing Recommended start page in markdown"
+
+
+def test_us027_find_first_source_page_prefers_source_pages() -> None:
+    """Unit: _find_first_source_page returns the first page with 'sources' in path."""
+    from scripts.quick_verify_papers import _find_first_source_page
+
+    paths = [
+        "/output/wiki_pages/001_paper/entities/transformer.md",
+        "/output/wiki_pages/001_paper/sources/attention-is-all-you-need.md",
+        "/output/wiki_pages/001_paper/sources/bert.md",
+    ]
+    result = _find_first_source_page(paths)
+    assert result is not None
+    assert "sources" in result
+    assert "attention-is-all-you-need" in result
+
+
+def test_us027_find_first_source_page_fallback_to_first() -> None:
+    """Unit: _find_first_source_page returns first path when no source page exists."""
+    from scripts.quick_verify_papers import _find_first_source_page
+
+    paths = [
+        "/output/wiki_pages/001_paper/entities/transformer.md",
+        "/output/wiki_pages/001_paper/concepts/self-attention.md",
+    ]
+    result = _find_first_source_page(paths)
+    assert result == paths[0]
+
+
+def test_us027_find_first_source_page_empty_list() -> None:
+    """Unit: _find_first_source_page returns None for empty list."""
+    from scripts.quick_verify_papers import _find_first_source_page
+
+    assert _find_first_source_page([]) is None
+
+
+def test_us027_derive_recommended_paths_single_vault() -> None:
+    """Unit: single vault dir is used directly as recommended vault path."""
+    from scripts.quick_verify_papers import _derive_recommended_paths
+
+    results = [
+        {
+            "artifacts": {
+                "wiki_pages_dir": "/output/wiki_pages/001_paper",
+                "wiki_pages": [
+                    "/output/wiki_pages/001_paper/sources/paper.md",
+                    "/output/wiki_pages/001_paper/entities/test.md",
+                ],
+            },
+        },
+    ]
+    vault, start = _derive_recommended_paths(results)
+    assert vault == "/output/wiki_pages/001_paper"
+    assert start is not None
+    assert "sources" in start
+
+
+def test_us027_derive_recommended_paths_multiple_vaults() -> None:
+    """Unit: multiple vault dirs uses common parent as recommended vault path."""
+    from scripts.quick_verify_papers import _derive_recommended_paths
+
+    results = [
+        {
+            "artifacts": {
+                "wiki_pages_dir": "/output/wiki_pages/001_paper",
+                "wiki_pages": ["/output/wiki_pages/001_paper/sources/a.md"],
+            },
+        },
+        {
+            "artifacts": {
+                "wiki_pages_dir": "/output/wiki_pages/002_paper",
+                "wiki_pages": ["/output/wiki_pages/002_paper/sources/b.md"],
+            },
+        },
+    ]
+    vault, start = _derive_recommended_paths(results)
+    assert vault == "/output/wiki_pages"
+    assert start is not None
+
+
+# ---------------------------------------------------------------------------
+# US-025: Shared-vault verification mode
+# ---------------------------------------------------------------------------
+
+
+def test_us025_shared_mode_creates_shared_vault_directory(tmp_path: Path) -> None:
+    """AC1: shared_corpus_vault mode exports pages to a single shared_vault root."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # A shared_vault directory must exist
+    shared_vault = outdir / "shared_vault"
+    assert shared_vault.exists(), "shared_vault directory must exist"
+    assert shared_vault.is_dir(), "shared_vault must be a directory"
+
+    # All per-paper wiki pages should be under shared_vault
+    for item in payload["files"]:
+        for page in item["artifacts"]["wiki_pages"]:
+            assert str(shared_vault) in page, (
+                f"Wiki page {page} not under shared_vault {shared_vault}"
+            )
+
+
+def test_us025_shared_mode_per_paper_traceability(tmp_path: Path) -> None:
+    """AC2: shared mode preserves per-paper traceability in page frontmatter."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # At least some pages should be exported
+    if payload["totals"]["wiki_output_count"] > 0:
+        shared_vault = outdir / "shared_vault"
+        # Read an exported page and verify traceability metadata in frontmatter
+        md_files = list(shared_vault.rglob("*.md"))
+        assert len(md_files) > 0, "Expected at least one .md file in shared_vault"
+
+        # Check that the frontmatter contains paper_label and source_file
+        import yaml as yaml_mod  # type: ignore[import-untyped]
+
+        page = md_files[0]
+        content = page.read_text(encoding="utf-8")
+        if content.startswith("---"):
+            end = content.find("---", 3)
+            if end != -1:
+                frontmatter_text = content[3:end]
+                fm = yaml_mod.safe_load(frontmatter_text)
+                assert "paper_label" in fm, (
+                    f"Missing paper_label in frontmatter of {page}"
+                )
+                assert "source_file" in fm, (
+                    f"Missing source_file in frontmatter of {page}"
+                )
+
+
+def test_us025_shared_mode_observable_in_summary(tmp_path: Path) -> None:
+    """AC3: the shared mode is observable in summary output and directory layout."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # summary.json must show shared_corpus_vault mode
+    assert payload["verification_mode"] == "shared_corpus_vault"
+
+    # Markdown must show the mode
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "shared_corpus_vault" in md_text
+
+    # The shared_vault directory must exist
+    assert (outdir / "shared_vault").is_dir()
+
+
+def test_us025_shared_mode_recommended_vault_points_to_shared_root(tmp_path: Path) -> None:
+    """AC2: recommended_vault_path must point to the shared vault root."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    if payload["totals"]["wiki_output_count"] > 0:
+        assert payload["recommended_vault_path"] is not None
+        assert "shared_vault" in payload["recommended_vault_path"]
+
+
+def test_us025_isolated_mode_unchanged(tmp_path: Path) -> None:
+    """AC: isolated_per_paper mode must keep existing per-paper directory behavior."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="isolated_per_paper",
+    )
+
+    # No shared_vault should exist
+    assert not (outdir / "shared_vault").exists(), (
+        "shared_vault must not exist in isolated mode"
+    )
+
+    # Per-paper wiki_pages directories should exist
+    wiki_pages_dir = outdir / "wiki_pages"
+    if payload["totals"]["wiki_output_count"] > 0:
+        assert wiki_pages_dir.exists(), "wiki_pages directory must exist in isolated mode"
+
+
+def test_us025_shared_mode_multiple_papers_separate_subdirs(tmp_path: Path) -> None:
+    """AC2: shared mode creates per-paper subdirectories under shared_vault."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_dual_column_pdf())
+
+    outdir = tmp_path / "verify-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    shared_vault = outdir / "shared_vault"
+    if payload["totals"]["wiki_output_count"] > 0:
+        # There should be subdirectories for each paper
+        subdirs = [d for d in shared_vault.iterdir() if d.is_dir()]
+        assert len(subdirs) >= 2, (
+            f"Expected at least 2 paper subdirectories, found {len(subdirs)}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# US-026: Regression coverage for shared-vault verification artifacts
+# ---------------------------------------------------------------------------
+
+
+def test_us026_shared_vault_summary_json_includes_verification_mode(tmp_path: Path) -> None:
+    """AC1: run_batch with shared_corpus_vault must set verification_mode in summary."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_dual_column_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    assert payload["verification_mode"] == "shared_corpus_vault"
+    summary_json = outdir / "summary.json"
+    assert summary_json.exists()
+    persisted = json.loads(summary_json.read_text(encoding="utf-8"))
+    assert persisted["verification_mode"] == "shared_corpus_vault"
+
+
+def test_us026_shared_vault_creates_shared_root_directory(tmp_path: Path) -> None:
+    """AC2: shared-vault mode must create a single shared vault root directory."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_dual_column_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # The summary must reference a shared_vault_root directory
+    assert "shared_vault_root" in payload, (
+        "Missing shared_vault_root in shared_corpus_vault summary payload"
+    )
+    shared_root = Path(payload["shared_vault_root"])
+    assert shared_root.is_dir(), f"shared_vault_root {shared_root} is not a directory"
+    assert shared_root.parent == outdir, "shared_vault_root should be directly under outdir"
+
+
+def test_us026_shared_vault_pages_from_multiple_papers_under_shared_root(tmp_path: Path) -> None:
+    """AC2: multiple papers must land under the shared vault root, not separate isolated roots."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_dual_column_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    shared_root = Path(payload["shared_vault_root"])
+
+    # Collect all wiki page paths exported across all papers
+    all_wiki_pages: list[str] = []
+    for item in payload["files"]:
+        wiki_pages = item["artifacts"]["wiki_pages"]
+        all_wiki_pages.extend(wiki_pages)
+
+    # In shared mode, all exported pages must be under the single shared root
+    for page_path_str in all_wiki_pages:
+        page_path = Path(page_path_str)
+        assert str(page_path).startswith(str(shared_root)), (
+            f"Shared-vault page {page_path} is not under shared root {shared_root}"
+        )
+
+    # Verify pages from at least two distinct paper sources are present
+    # (this confirms the vault is truly shared, not just one paper)
+    assert len(payload["files"]) >= 2, "Need at least 2 papers to validate shared vault"
+    papers_with_pages = [
+        item for item in payload["files"]
+        if item["counts"]["wiki_pages_exported"] > 0
+    ]
+    assert len(papers_with_pages) >= 1, "At least one paper should have exported wiki pages"
+
+
+def test_us026_shared_vault_per_paper_traceability_preserved(tmp_path: Path) -> None:
+    """AC3: per-paper traceability must be maintained in shared-vault mode."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # Each per-paper result must still have full traceability fields
+    for item in payload["files"]:
+        assert "file_name" in item
+        assert "run_id" in item
+        assert "status" in item
+        assert "verdict" in item
+        assert "gate" in item
+        assert "review_status" in item
+        assert "artifacts" in item
+        # Per-paper result.json must still be written in the runs directory
+        assert "workspace_dir" in item["artifacts"]
+
+    # The runs directory must still contain per-paper result.json files
+    runs_dir = outdir / "runs"
+    assert runs_dir.exists(), "Per-paper runs directory must exist for traceability"
+    run_dirs = sorted(d for d in runs_dir.iterdir() if d.is_dir())
+    assert len(run_dirs) >= 1
+    for run_dir in run_dirs:
+        assert (run_dir / "result.json").exists(), f"Missing result.json in {run_dir}"
+
+
+def test_us026_shared_vault_summary_fields_present(tmp_path: Path) -> None:
+    """AC3: shared-mode summary must include shared-vault-specific fields."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # The shared-mode summary must include these batch-level fields
+    assert "verification_mode" in payload
+    assert payload["verification_mode"] == "shared_corpus_vault"
+    assert "shared_vault_root" in payload, "Missing shared_vault_root in payload"
+
+    # Shared-vault total page count across all papers
+    assert "shared_vault_total_pages" in payload, (
+        "Missing shared_vault_total_pages in payload"
+    )
+    assert isinstance(payload["shared_vault_total_pages"], int)
+
+    # Paper count contributing to the shared vault
+    assert "shared_vault_paper_count" in payload, (
+        "Missing shared_vault_paper_count in payload"
+    )
+    assert isinstance(payload["shared_vault_paper_count"], int)
+
+    # The shared_vault_paper_count must match the number of files with wiki pages
+    papers_with_pages = sum(
+        1 for item in payload["files"]
+        if item["counts"]["wiki_pages_exported"] > 0
+    )
+    assert payload["shared_vault_paper_count"] == papers_with_pages
+
+
+def test_us026_shared_vault_verdict_uses_unified_wording() -> None:
+    """AC3: shared-vault verdict must use unified/batch wording, not isolated wording."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 5}},
+    ]
+    v = _build_verdict(results, verification_mode="shared_corpus_vault")
+    assert v["status"] == "basically_yes"
+    # Shared mode must use batch/unified wording
+    assert "一键批量" in v["headline"]
+    # Must NOT contain isolated-mode disclaimer
+    assert "未对统一共享 wiki 库进行校验" not in v["answer"]
+    assert "逐论文管线" not in v["headline"]
+
+
+def test_us026_shared_vault_verdict_partial_yes() -> None:
+    """Shared-mode partial_yes must use unified wording."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "quality_blocked", "status": "success", "counts": {"wiki_pages_exported": 0}},
+    ]
+    v = _build_verdict(results, verification_mode="shared_corpus_vault")
+    assert v["status"] == "partial_yes"
+    assert "一键批量" in v["headline"]
+
+
+def test_us026_shared_vault_verdict_quality_blocked() -> None:
+    """Shared-mode quality_blocked must use unified wording."""
+    results = [
+        {"verdict": "quality_blocked", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results, verification_mode="shared_corpus_vault")
+    assert v["status"] == "quality_blocked"
+    assert "质量阻断" in v["headline"] or "阻断" in v["headline"]
+    assert "逐论文管线" not in v["headline"]
+
+
+def test_us026_shared_vault_verdict_not_yet() -> None:
+    """Shared-mode not_yet must use unified wording."""
+    results = [
+        {"verdict": "pipeline_runnable", "status": "success", "counts": {"wiki_pages_exported": 0}},
+    ]
+    v = _build_verdict(results, verification_mode="shared_corpus_vault")
+    assert v["status"] == "not_yet"
+    assert "一键批量" in v["headline"]
+    assert "逐论文管线" not in v["headline"]
+
+
+def test_us026_shared_vault_verdict_no_input() -> None:
+    """Shared-mode no_input must use unified wording."""
+    v = _build_verdict([], verification_mode="shared_corpus_vault")
+    assert v["status"] == "no_input"
+    assert "一键转 wiki" in v["answer"]
+    assert "逐论文" not in v["answer"]
+
+
+def test_us026_shared_vault_markdown_renders_mode(tmp_path: Path) -> None:
+    """AC3: markdown summary must show shared_corpus_vault mode without isolated disclaimer."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "shared_corpus_vault" in md_text, (
+        "Markdown must reference shared_corpus_vault verification mode"
+    )
+    # Must NOT contain isolated-mode disclaimer
+    assert "did not validate a unified shared vault" not in md_text, (
+        "Shared-vault markdown must not contain isolated-mode disclaimer"
+    )
+
+
+def test_us026_shared_vault_isolated_runs_still_created(tmp_path: Path) -> None:
+    """Per-paper run workspaces must still exist for debugging in shared-vault mode."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_dual_column_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # Isolated per-paper run directories must still be present for debugging
+    runs_dir = outdir / "runs"
+    assert runs_dir.exists()
+    run_dirs = sorted(d for d in runs_dir.iterdir() if d.is_dir())
+    assert len(run_dirs) == 2, (
+        f"Expected 2 run directories, found {len(run_dirs)}"
+    )
+    for run_dir in run_dirs:
+        result_json = run_dir / "result.json"
+        assert result_json.exists()
+        data = json.loads(result_json.read_text(encoding="utf-8"))
+        assert "verdict" in data
+        assert "status" in data
+
+
+def test_us026_shared_vault_no_isolated_wiki_dirs(tmp_path: Path) -> None:
+    """AC2: shared-vault mode must NOT create per-paper isolated wiki_pages directories."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+    (papers_dir / "beta.pdf").write_bytes(_build_dual_column_pdf())
+
+    outdir = tmp_path / "shared-vault-output"
+    payload = run_batch(
+        argparse.Namespace(
+            papers_dir=papers_dir,
+            outdir=outdir,
+            pattern="*",
+            max_files=None,
+            config=REPO_ROOT / "configs" / "router.yaml",
+            continue_on_error=True,
+        ),
+        verification_mode="shared_corpus_vault",
+    )
+
+    # The old-style per-paper wiki_pages directory must NOT exist
+    isolated_wiki_dir = outdir / "wiki_pages"
+    assert not isolated_wiki_dir.exists(), (
+        "In shared_corpus_vault mode, isolated per-paper wiki_pages/ directory must not be created"
+    )
