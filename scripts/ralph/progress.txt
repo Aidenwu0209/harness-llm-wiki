@@ -239,3 +239,34 @@
   - `setdefault` pattern ensures script-failure results also get zero-valued dropped-count fields without special-casing the `_build_script_failure` constructor
   - All three dropped-count dimensions (empty_slug, unreadable_title, entity/concept split) are additive in the manifest and quick_verify follows the same pattern as existing US-013 empty-slug tracking
 ---
+
+## 2026-04-18 08:41 - US-017
+- Added `_sanitize_heading_title_text()` method to `GlobalRepair` in `normalizer.py` that applies `sanitize_title()` to `text_plain` and `text_md` of HEADING and TITLE blocks during normalization (stage 4)
+- This ensures downstream extraction (stage 5) consumes cleaned candidates — control chars, private-use codepoints, and whitespace are sanitized BEFORE entities/claims are created
+- The sanitization step runs BEFORE all other repairs (heading hierarchy, repeated header/footer removal, etc.) so downstream repairs also see clean text
+- Each sanitized block is logged as a `RepairRecord` with type `heading_title_text_sanitized` for auditability
+- Added 12 tests in `tests/test_heading_title_cleanup_us017.py`: text cleaning applied to heading/title, paragraph blocks unaffected, control chars removed, binary garbage stripped, whitespace collapsed, repair log verification, entity extraction uses cleaned names, claim extraction uses cleaned headings, end-to-end dirty heading flow
+- All ACs pass: mypy clean (46 source files), 1201 tests pass
+- **Changed files:** `docos/pipeline/normalizer.py`, `tests/test_heading_title_cleanup_us017.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - `_sanitize_heading_title_text()` is called as the FIRST step in `GlobalRepair.repair()` — before heading hierarchy normalization, so `_normalize_heading_hierarchy` also benefits from clean text
+  - Blocks other than HEADING and TITLE are intentionally left untouched during normalization — paragraph text cleaning is out of scope for US-017
+  - `sanitize_title()` from `docos/slugify.py` is now applied at two stages: normalization (for block text) and compilation (for page titles via `_clean_title()`). This is by design — the normalize-stage cleaning strips noise before extraction, while compile-stage cleaning handles the final output
+  - `_normalize_heading_hierarchy` shifts `##` to `#` when headings start at level 2 — tests with single headings must start at level 1 to avoid hierarchy shift side-effects
+---
+
+## 2026-04-18 20:30 - US-018
+- Added readability gate (`is_readable_title()`) to `RuleBasedEntityExtractor.extract_entities()` in `docos/knowledge/extractor.py`
+- Both document entity (from TITLE blocks) and concept entities (from HEADING blocks) are now filtered before being appended to the entity list
+- Unreadable entities never reach the knowledge store — they are discarded at the extraction layer, before `_stage_extract()` persists anything
+- The compile-stage gate in `runner.py._stage_compile()` still acts as a safety net but will no longer catch entities already filtered at extraction
+- Added 10 targeted tests in `tests/test_entity_readability_gate_us018.py`: readable entity created, garbage title blocked, garbage heading blocked, CJK passes, control-char heading blocked, mixed readable/garbage, replacement char blocked, empty title no entity, deterministic filtering, persistence payload blocked
+- All ACs pass: mypy clean (46 source files), 1211 tests pass
+- **Changed files:** `docos/knowledge/extractor.py`, `tests/test_entity_readability_gate_us018.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - The readability gate is now applied at **two** layers: extraction (`extractor.py`) and compile (`runner.py`) — extraction prevents persistence, compile prevents page generation
+  - `is_readable_title()` is imported inside `extract_entities()` method (not at module top level) to match the existing pattern in `runner.py`
+  - Block model requires `source_parser` and `source_node_id` fields — use `_make_block()` pattern from US-017 tests
+  - `\xff` (`ÿ`) and `\xfe` (`þ`) are valid Latin-1 letters and pass `isalnum()` — use `\x00-\x08` control chars or `\ufffd` replacement chars for garbage test data instead
+  - `is_readable_title` threshold is 30% (`min_alpha_ratio=0.3`); when constructing noisy test data, ensure readable chars are < 30% of total length
+---
