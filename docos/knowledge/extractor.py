@@ -79,21 +79,29 @@ class RuleBasedEntityExtractor:
     - Title blocks → document entity
     - Heading text patterns → concept entities
     - All content → aggregate for later LLM-based extraction
+
+    Entity candidates that fail the readability gate (``is_readable_title``)
+    are discarded before they enter the returned list, preventing unreadable
+    labels from being persisted to the knowledge store or compiled into pages.
     """
 
     def extract_entities(self, docir: DocIR) -> list[EntityRecord]:
+        from docos.slugify import is_readable_title
+
         entities: list[EntityRecord] = []
 
         # Document entity from title
         for block in docir.blocks:
             if block.block_type == BlockType.TITLE and block.text_plain:
-                entities.append(EntityRecord(
-                    entity_id=_deterministic_id("ent", "document", docir.source_id, block.text_plain.strip()),
-                    canonical_name=block.text_plain.strip()[:200],
-                    entity_type=EntityType.DOCUMENT,
-                    source_ids=[docir.source_id],
-                    defining_description=f"Document: {block.text_plain.strip()[:200]}",
-                ))
+                title = block.text_plain.strip()[:200]
+                if is_readable_title(title):
+                    entities.append(EntityRecord(
+                        entity_id=_deterministic_id("ent", "document", docir.source_id, title),
+                        canonical_name=title,
+                        entity_type=EntityType.DOCUMENT,
+                        source_ids=[docir.source_id],
+                        defining_description=f"Document: {title}",
+                    ))
                 break
 
         # Extract potential concept entities from headings
@@ -103,12 +111,13 @@ class RuleBasedEntityExtractor:
                 name = block.text_plain.strip()
                 if name and name not in seen_headings and len(name) > 2:
                     seen_headings.add(name)
-                    entities.append(EntityRecord(
-                        entity_id=_deterministic_id("ent", "concept", docir.source_id, name),
-                        canonical_name=name,
-                        entity_type=EntityType.CONCEPT,
-                        source_ids=[docir.source_id],
-                    ))
+                    if is_readable_title(name):
+                        entities.append(EntityRecord(
+                            entity_id=_deterministic_id("ent", "concept", docir.source_id, name),
+                            canonical_name=name,
+                            entity_type=EntityType.CONCEPT,
+                            source_ids=[docir.source_id],
+                        ))
 
         return entities
 
