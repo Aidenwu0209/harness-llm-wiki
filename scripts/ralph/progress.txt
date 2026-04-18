@@ -270,3 +270,16 @@
   - `\xff` (`ÿ`) and `\xfe` (`þ`) are valid Latin-1 letters and pass `isalnum()` — use `\x00-\x08` control chars or `\ufffd` replacement chars for garbage test data instead
   - `is_readable_title` threshold is 30% (`min_alpha_ratio=0.3`); when constructing noisy test data, ensure readable chars are < 30% of total length
 ---
+
+## 2026-04-18 09:10 - US-019
+- Verified that US-018's `is_readable_title()` gate in `RuleBasedEntityExtractor.extract_entities()` already covers concept entities (EntityType.CONCEPT from HEADING blocks)
+- Concept readability gate is applied at extraction layer — unreadable heading names are discarded before entity list is returned
+- Compile-stage gate in `runner.py._stage_compile()` acts as secondary safety net for concept pages
+- Added 9 targeted tests in `tests/test_concept_readability_gate_us019.py` covering all 3 ACs: readable concept created, garbage concept blocked, CJK concept passes, control chars blocked, mixed readable/garbage, replacement char blocked, persistence payload blocked, deterministic filtering, concept blocking independent of document entity
+- All ACs pass: mypy clean (46 source files), 1220 tests pass
+- **Changed files:** `tests/test_concept_readability_gate_us019.py`, `scripts/ralph/prd.json`
+- **未来迭代的学习：**
+  - Concept entities share the same extraction path as document entities in `RuleBasedEntityExtractor` — both use `is_readable_title()` gate, applied in the same `extract_entities()` method
+  - US-018 and US-019 both test the same extraction gate but from different perspectives: US-018 focuses on entity extraction broadly, US-019 focuses specifically on concept (heading-based) candidates
+  - When testing concept entities specifically, filter by `EntityType.CONCEPT` to isolate concept-level behavior from document-level behavior
+---
