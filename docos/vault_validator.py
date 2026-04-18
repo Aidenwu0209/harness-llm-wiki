@@ -28,7 +28,9 @@ from docos.slugify import is_readable_title
 MAX_FILENAME_LENGTH: int = 200
 
 #: Minimum alphanumeric ratio for a slug to be considered readable.
-MIN_SLUG_READABLE_RATIO: float = 0.3
+#: Set lower than the title filter threshold (0.5) because source page
+#: slugs like ``src-a44d7e22d200`` legitimately contain hex hashes.
+MIN_SLUG_READABLE_RATIO: float = 0.2
 
 # ---------------------------------------------------------------------------
 # Internal patterns

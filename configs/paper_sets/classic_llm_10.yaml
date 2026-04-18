@@ -1,0 +1,66 @@
+name: classic_llm_10
+description: >
+  A compact progression from early neural NLP representations to transformers
+  and large language models. Intended for one-shot smoke verification rather
+  than benchmark-quality corpus curation.
+papers:
+  - id: word2vec
+    title: Efficient Estimation of Word Representations in Vector Space
+    year: 2013
+    venue: arXiv
+    filename: 01_word2vec_efficient-estimation.pdf
+    pdf_url: https://arxiv.org/pdf/1301.3781.pdf
+  - id: glove
+    title: GloVe - Global Vectors for Word Representation
+    year: 2014
+    venue: EMNLP 2014
+    filename: 02_glove_global-vectors.pdf
+    pdf_url: https://aclanthology.org/D14-1162.pdf
+  - id: seq2seq
+    title: Sequence to Sequence Learning with Neural Networks
+    year: 2014
+    venue: NeurIPS 2014 / arXiv
+    filename: 03_seq2seq_learning-neural-networks.pdf
+    pdf_url: https://arxiv.org/pdf/1409.3215.pdf
+  - id: bahdanau_attention
+    title: Neural Machine Translation by Jointly Learning to Align and Translate
+    year: 2014
+    venue: arXiv
+    filename: 04_neural-machine-translation_attention.pdf
+    pdf_url: https://arxiv.org/pdf/1409.0473.pdf
+  - id: transformer
+    title: Attention Is All You Need
+    year: 2017
+    venue: NeurIPS 2017 / arXiv
+    filename: 05_attention-is-all-you-need.pdf
+    pdf_url: https://arxiv.org/pdf/1706.03762.pdf
+  - id: elmo
+    title: Deep Contextualized Word Representations
+    year: 2018
+    venue: NAACL 2018
+    filename: 06_elmo_deep-contextualized-word-representations.pdf
+    pdf_url: https://aclanthology.org/N18-1202.pdf
+  - id: bert
+    title: BERT - Pre-training of Deep Bidirectional Transformers for Language Understanding
+    year: 2019
+    venue: NAACL 2019
+    filename: 07_bert_pre-training-bidirectional-transformers.pdf
+    pdf_url: https://aclanthology.org/N19-1423.pdf
+  - id: roberta
+    title: RoBERTa - A Robustly Optimized BERT Pretraining Approach
+    year: 2019
+    venue: arXiv
+    filename: 08_roberta_robustly-optimized-bert.pdf
+    pdf_url: https://arxiv.org/pdf/1907.11692.pdf
+  - id: t5
+    title: Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer
+    year: 2020
+    venue: JMLR
+    filename: 09_t5_unified-text-to-text-transformer.pdf
+    pdf_url: https://jmlr.org/papers/volume21/20-074/20-074.pdf
+  - id: gpt3
+    title: Language Models are Few-Shot Learners
+    year: 2020
+    venue: arXiv
+    filename: 10_gpt3_few-shot-learners.pdf
+    pdf_url: https://arxiv.org/pdf/2005.14165.pdf

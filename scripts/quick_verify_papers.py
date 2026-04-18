@@ -223,6 +223,16 @@ def _classify_verdict(item: dict[str, Any]) -> str:
         return "quality_blocked"
 
     if gate_passed is True and wiki_pages_exported > 0:
+        # A paper with no extracted knowledge (0 entities, 0 claims, 0 relations)
+        # should not be classified as usable_wiki_ready even if gate passed.
+        # It only proved the pipeline ran, not that usable wiki was produced.
+        counts = item.get("counts", {})
+        if (
+            counts.get("entities", 0) == 0
+            and counts.get("claims", 0) == 0
+            and counts.get("relations", 0) == 0
+        ):
+            return "pipeline_runnable"
         return "usable_wiki_ready"
 
     return "pipeline_runnable"

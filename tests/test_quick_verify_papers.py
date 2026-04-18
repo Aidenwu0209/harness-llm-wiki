@@ -189,11 +189,11 @@ def test_us002_gate_blocked_excluded_from_usable_wiki_ready_tally() -> None:
     from collections import Counter
 
     items = [
-        # This one should be usable_wiki_ready: gate passed, wiki exported
-        {"run_status": "completed", "gate": {"passed": True}, "review_status": None, "counts": {"wiki_pages_exported": 3}},
+        # This one should be usable_wiki_ready: gate passed, wiki exported, has knowledge
+        {"run_status": "completed", "gate": {"passed": True}, "review_status": None, "counts": {"wiki_pages_exported": 3, "entities": 2, "claims": 1, "relations": 1}},
         # These should be quality_blocked: gate failed
-        {"run_status": "completed", "gate": {"passed": False}, "review_status": None, "counts": {"wiki_pages_exported": 5}},
-        {"run_status": "completed", "gate": {"passed": False}, "review_status": "approved", "counts": {"wiki_pages_exported": 2}},
+        {"run_status": "completed", "gate": {"passed": False}, "review_status": None, "counts": {"wiki_pages_exported": 5, "entities": 1, "claims": 0, "relations": 0}},
+        {"run_status": "completed", "gate": {"passed": False}, "review_status": "approved", "counts": {"wiki_pages_exported": 2, "entities": 0, "claims": 1, "relations": 0}},
     ]
     for item in items:
         item["verdict"] = _classify_verdict(item)
@@ -1010,7 +1010,7 @@ def test_us021_vault_validation_all_pass_is_usable_wiki_ready() -> None:
         "run_status": "completed",
         "gate": {"passed": True},
         "review_status": None,
-        "counts": {"wiki_pages_exported": 5},
+        "counts": {"wiki_pages_exported": 5, "entities": 2, "claims": 1, "relations": 1},
         "vault_validation": {
             "total_pages": 5,
             "passed_pages": 5,
@@ -1028,7 +1028,7 @@ def test_us021_no_vault_validation_data_allows_usable_wiki_ready() -> None:
         "run_status": "completed",
         "gate": {"passed": True},
         "review_status": None,
-        "counts": {"wiki_pages_exported": 3},
+        "counts": {"wiki_pages_exported": 3, "entities": 1, "claims": 1, "relations": 0},
     }
     # No vault_validation key — should still reach usable_wiki_ready
     assert _classify_verdict(item) == "usable_wiki_ready"
@@ -1040,7 +1040,7 @@ def test_us021_zero_failed_pages_allows_usable_wiki_ready() -> None:
         "run_status": "completed",
         "gate": {"passed": True},
         "review_status": None,
-        "counts": {"wiki_pages_exported": 3},
+        "counts": {"wiki_pages_exported": 3, "entities": 1, "claims": 1, "relations": 0},
         "vault_validation": {
             "total_pages": 3,
             "passed_pages": 3,
@@ -2276,3 +2276,81 @@ def test_us028_ten_paper_per_paper_table_rows(tmp_path: Path) -> None:
     table_rows = [line for line in md_text.splitlines() if line.startswith("|") and not line.startswith("| ---")]
     # Header row + 10 paper rows = 11 rows
     assert len(table_rows) == 11, f"Expected 11 table rows (1 header + 10 papers), got {len(table_rows)}"
+
+
+# ---------------------------------------------------------------------------
+# Harness fix: knowledge-sparse papers must not be usable_wiki_ready
+# ---------------------------------------------------------------------------
+
+
+def test_knowledge_sparse_gate_passed_not_usable_wiki_ready() -> None:
+    """A paper with gate passed but 0 entities/claims/relations must NOT be usable_wiki_ready."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True, "decision": "passed", "reasons": []},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 1, "entities": 0, "claims": 0, "relations": 0},
+    }
+    assert _classify_verdict(item) == "pipeline_runnable"
+
+
+def test_knowledge_sparse_with_knowledge_is_usable_wiki_ready() -> None:
+    """A paper with gate passed and entities > 0 CAN be usable_wiki_ready."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True, "decision": "passed", "reasons": []},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 5, "entities": 3, "claims": 2, "relations": 1},
+    }
+    assert _classify_verdict(item) == "usable_wiki_ready"
+
+
+def test_knowledge_sparse_partial_knowledge_is_usable_wiki_ready() -> None:
+    """A paper with gate passed and at least some claims CAN be usable_wiki_ready."""
+    item = {
+        "run_status": "completed",
+        "gate": {"passed": True},
+        "review_status": None,
+        "counts": {"wiki_pages_exported": 2, "entities": 0, "claims": 1, "relations": 0},
+    }
+    assert _classify_verdict(item) == "usable_wiki_ready"
+
+
+# ---------------------------------------------------------------------------
+# Harness fix: is_readable_title rejects garbled PDF text
+# ---------------------------------------------------------------------------
+
+
+def test_is_readable_title_rejects_non_ascii_garbage() -> None:
+    """Garbled PDF text with mostly non-ASCII letters must be rejected."""
+    from docos.slugify import is_readable_title
+
+    # Simulated garbled heading from a PDF
+    assert not is_readable_title("ôsôíæõq wêúçhï írhäpgõï")
+    assert not is_readable_title("ßp53íæ åzîeeuvs 8 ít5ñi³iãýäç")
+
+
+def test_is_readable_title_accepts_normal_english() -> None:
+    """Normal English text must be accepted."""
+    from docos.slugify import is_readable_title
+
+    assert is_readable_title("Attention Is All You Need")
+    assert is_readable_title("Word2Vec: Efficient Estimation")
+    assert is_readable_title("Introduction to Neural Networks")
+
+
+def test_is_readable_title_accepts_mixed_ascii() -> None:
+    """Text with mostly non-ASCII but some ASCII letters should still be rejected if ASCII letter ratio too low."""
+    from docos.slugify import is_readable_title
+
+    # Only a few ASCII letters mixed into lots of non-ASCII — should be rejected
+    assert not is_readable_title("ôsôíæõq wêúçhï írhäpgõï")
+
+
+def test_is_readable_title_rejects_empty() -> None:
+    """Empty or whitespace-only text must be rejected."""
+    from docos.slugify import is_readable_title
+
+    assert not is_readable_title("")
+    assert not is_readable_title("   ")
+

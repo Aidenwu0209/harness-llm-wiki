@@ -101,17 +101,25 @@ def sanitize_title(text: str) -> str:
     return s
 
 
-def is_readable_title(text: str, *, min_alpha_ratio: float = 0.3) -> bool:
+def is_readable_title(text: str, *, min_alpha_ratio: float = 0.5) -> bool:
     """Return ``True`` when *text* contains enough readable characters.
 
-    A title is considered readable when:
+    A title is considered readable when **all** of the following hold:
+
     * It is non-empty after stripping whitespace.
-    * At least ``min_alpha_ratio`` (default 30 %) of characters are
+    * At least ``min_alpha_ratio`` (default 50 %) of characters are
       alphanumeric, whitespace, or common punctuation.
+    * At least ``min_alpha_ratio`` of characters are **ASCII** letters.
+      This prevents garbled PDF text (e.g. ``"ôsôíæõq wêúçhï"``) from
+      passing — such strings have high ``isalnum()`` ratio but almost no
+      ASCII letters.
 
     Args:
         text: Title to evaluate.
         min_alpha_ratio: Minimum fraction of readable characters (0–1).
+            Default is 0.5 (50 %).  Callers that need a weaker check
+            (e.g. vault validator inspecting slug-like identifiers) can
+            pass a lower value.
 
     Returns:
         Boolean readability verdict.
@@ -121,5 +129,26 @@ def is_readable_title(text: str, *, min_alpha_ratio: float = 0.3) -> bool:
     total = len(text)
     if total == 0:
         return False
+    # Broad readability check (Unicode letters + punctuation)
     readable = sum(1 for c in text if c.isalnum() or c.isspace() or c in "._-,;:!'\"()")
-    return (readable / total) >= min_alpha_ratio
+    if (readable / total) < min_alpha_ratio:
+        return False
+    # ASCII readability gate — rejects garbled PDF text that passes isalnum()
+    # but consists mostly of non-ASCII Unicode letters.  Uses the same
+    # threshold so callers (like the vault validator) can relax it when
+    # checking slug-style identifiers that legitimately contain digits.
+    #
+    # Exception: CJK text (Chinese/Japanese/Korean) is inherently readable
+    # even without ASCII letters.  Garbled PDF text consists mainly of Latin
+    # Extended characters (ô, ê, ç, ß, etc.), not CJK ideographs.
+    has_cjk = any(
+        "\u4e00" <= c <= "\u9fff"      # CJK Unified Ideographs
+        or "\u3040" <= c <= "\u309f"    # Hiragana
+        or "\u30a0" <= c <= "\u30ff"    # Katakana
+        or "\uac00" <= c <= "\ud7af"    # Hangul Syllables
+        for c in text
+    )
+    if has_cjk:
+        return True
+    ascii_letters = sum(1 for c in text if c.isascii() and c.isalpha())
+    return (ascii_letters / total) >= min_alpha_ratio
