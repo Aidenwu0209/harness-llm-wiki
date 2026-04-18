@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests.fixtures.build_fixtures import _build_dual_column_pdf, _build_simple_pdf
 
 
@@ -155,6 +157,7 @@ from scripts.quick_verify_papers import _classify_verdict  # noqa: E402
 from scripts.quick_verify_papers import _fmt_rate  # noqa: E402
 from scripts.quick_verify_papers import _is_knowledge_sparse  # noqa: E402
 from scripts.quick_verify_papers import _is_wiki_sparse  # noqa: E402
+from scripts.quick_verify_papers import run_batch  # noqa: E402
 
 
 def test_us002_gate_passed_false_classified_as_quality_blocked() -> None:
@@ -1103,3 +1106,182 @@ def test_us021_markdown_includes_paper_level_validator_counts(tmp_path: Path) ->
     md_text = (outdir / "summary.md").read_text(encoding="utf-8")
     assert "Papers passed validation" in md_text, "Missing Papers passed validation in markdown"
     assert "Papers failed validation" in md_text, "Missing Papers failed validation in markdown"
+
+
+# ---------------------------------------------------------------------------
+# US-024: Prevent isolated-mode summaries from claiming unified wiki validation
+# ---------------------------------------------------------------------------
+
+
+def test_us024_isolated_verdict_headline_uses_pipeline_wording() -> None:
+    """AC2: In isolated mode the verdict headline must say '逐论文管线' not '一键批量'."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 5}},
+    ]
+    v = _build_verdict(results, verification_mode="isolated_per_paper")
+    assert v["status"] == "basically_yes"
+    assert "逐论文管线" in v["headline"]
+    assert "一键批量" not in v["headline"]
+
+
+def test_us024_isolated_verdict_answer_includes_disclaimer() -> None:
+    """AC1: Isolated-mode answer must say the run did not validate a unified shared vault."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results, verification_mode="isolated_per_paper")
+    assert "未对统一共享 wiki 库进行校验" in v["answer"]
+
+
+def test_us024_isolated_partial_yes_uses_pipeline_wording() -> None:
+    """AC2: Partial yes in isolated mode must also use pipeline wording."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+        {"verdict": "quality_blocked", "status": "success", "counts": {"wiki_pages_exported": 0}},
+    ]
+    v = _build_verdict(results, verification_mode="isolated_per_paper")
+    assert v["status"] == "partial_yes"
+    assert "逐论文管线" in v["headline"]
+    assert "未对统一共享 wiki 库进行校验" in v["answer"]
+
+
+def test_us024_isolated_quality_blocked_uses_pipeline_wording() -> None:
+    """AC2: Quality blocked in isolated mode must use pipeline wording."""
+    results = [
+        {"verdict": "quality_blocked", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results, verification_mode="isolated_per_paper")
+    assert v["status"] == "quality_blocked"
+    assert "逐论文管线" in v["headline"]
+
+
+def test_us024_isolated_not_yet_uses_pipeline_wording() -> None:
+    """AC2: Not-yet in isolated mode must use pipeline wording."""
+    results = [
+        {"verdict": "pipeline_runnable", "status": "success", "counts": {"wiki_pages_exported": 0}},
+    ]
+    v = _build_verdict(results, verification_mode="isolated_per_paper")
+    assert v["status"] == "not_yet"
+    assert "逐论文管线" in v["headline"]
+
+
+def test_us024_shared_corpus_vault_uses_unified_wording() -> None:
+    """When mode is shared_corpus_vault, the old unified wording is used."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results, verification_mode="shared_corpus_vault")
+    assert v["status"] == "basically_yes"
+    assert "一键批量" in v["headline"]
+    assert "未对统一共享 wiki 库进行校验" not in v["answer"]
+
+
+def test_us024_markdown_includes_isolated_disclaimer(tmp_path: Path) -> None:
+    """AC1: Markdown output must contain the isolated-mode disclaimer block."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Verification mode: isolated per-paper" in md_text or "isolated_per_paper" in md_text
+    assert "did not validate a unified shared vault" in md_text
+
+
+def test_us024_isolated_no_input_uses_pipeline_wording() -> None:
+    """AC2: No-input case in isolated mode must use pipeline wording."""
+    v = _build_verdict([], verification_mode="isolated_per_paper")
+    assert v["status"] == "no_input"
+    assert "逐论文管线" in v["answer"]
+
+
+def test_us024_default_mode_is_isolated() -> None:
+    """AC1: Default verification_mode must be isolated_per_paper."""
+    results = [
+        {"verdict": "usable_wiki_ready", "status": "success", "counts": {"wiki_pages_exported": 3}},
+    ]
+    v = _build_verdict(results)
+    assert "逐论文管线" in v["headline"]
+    assert "未对统一共享 wiki 库进行校验" in v["answer"]
+
+
+# ---------------------------------------------------------------------------
+# US-023: Explicit verification-mode field in batch outputs
+# ---------------------------------------------------------------------------
+
+
+def test_us023_summary_json_includes_verification_mode(tmp_path: Path) -> None:
+    """AC1: summary.json must include verification_mode field."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "verification_mode" in payload, "Missing verification_mode in summary payload"
+    assert payload["verification_mode"] == "isolated_per_paper"
+
+
+def test_us023_markdown_renders_verification_mode(tmp_path: Path) -> None:
+    """AC2: markdown summary must render the verification mode."""
+    papers_dir = tmp_path / "papers"
+    papers_dir.mkdir()
+    (papers_dir / "alpha.pdf").write_bytes(_build_simple_pdf())
+
+    outdir = tmp_path / "verify-output"
+    result = _run_quick_verify(str(papers_dir), "--outdir", str(outdir))
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Verification mode" in md_text, "Missing Verification mode in markdown summary"
+    assert "isolated_per_paper" in md_text, "Missing isolated_per_paper value in markdown summary"
+
+
+def test_us023_verification_mode_shared_corpus_vault() -> None:
+    """AC1+AC3: verification_mode can be asserted without inferring from directory layout."""
+    import argparse
+
+    args = argparse.Namespace(
+        papers_dir=Path("/nonexistent"),
+        outdir=Path("/nonexistent"),
+        pattern="*",
+        max_files=None,
+        config=REPO_ROOT / "configs" / "router.yaml",
+        continue_on_error=True,
+    )
+    # Verify that the keyword argument is accepted
+    # (we cannot actually run the batch here, but we verify the parameter exists)
+    import inspect
+    sig = inspect.signature(run_batch)
+    assert "verification_mode" in sig.parameters, "run_batch must accept verification_mode parameter"
+    assert sig.parameters["verification_mode"].default == "isolated_per_paper"
+
+
+def test_us023_invalid_verification_mode_raises() -> None:
+    """Verification mode must be one of the accepted values."""
+    import argparse
+
+    args = argparse.Namespace(
+        papers_dir=Path("/nonexistent"),
+        outdir=Path("/nonexistent"),
+        pattern="*",
+        max_files=None,
+        config=REPO_ROOT / "configs" / "router.yaml",
+        continue_on_error=True,
+    )
+    # Create minimal papers dir and config so run_batch validates mode first
+    import pytest
+
+    with pytest.raises(ValueError, match="verification_mode"):
+        # Need a real papers_dir to get past the first check
+        papers_dir = Path(__file__).resolve().parents[1] / "tests" / "fixtures"
+        args.papers_dir = papers_dir
+        args.outdir = Path("/tmp/us023_test")
+        run_batch(args, verification_mode="invalid_mode")

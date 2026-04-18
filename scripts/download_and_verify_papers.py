@@ -308,6 +308,8 @@ def _build_verdict(
     selected_papers: list[dict[str, Any]],
     download_results: list[dict[str, Any]],
     verify_payload: dict[str, Any] | None,
+    *,
+    verification_mode: str = "isolated_per_paper",
 ) -> dict[str, str]:
     """Build a quality-aware top-level verdict for download-and-verify.
 
@@ -315,12 +317,29 @@ def _build_verdict(
     quick-verify quality signals (gate pass rate, pending review count,
     usable-wiki-ready count).  It is never a direct passthrough of
     quick-verify's internal verdict.
+
+    When *verification_mode* is ``"isolated_per_paper"`` (the default), verdict
+    text is scoped to per-paper pipeline validation and explicitly notes that
+    a unified shared vault was **not** validated.
     """
     selected_count = len(selected_papers)
     download_success_count = sum(1 for item in download_results if item["status"] in ("downloaded", "reused"))
     download_failed_count = sum(1 for item in download_results if item["status"] == "failed")
 
+    is_isolated = verification_mode == "isolated_per_paper"
+
+    # Isolated-mode disclaimer appended to every non-empty answer
+    isolated_disclaimer = ""
+    if is_isolated:
+        isolated_disclaimer = " 本次运行为逐论文独立管线验证，未对统一共享 wiki 库进行校验。"
+
     if download_success_count == 0:
+        if is_isolated:
+            return {
+                "status": "not_yet",
+                "headline": "这次未形成有效验证样本",
+                "answer": "选中的论文没有成功下载到可验证输入，因此还不能回答系统是否具备逐论文管线转 wiki 的能力。",
+            }
         return {
             "status": "not_yet",
             "headline": "这次未形成有效验证样本",
@@ -340,10 +359,25 @@ def _build_verdict(
     quality_blocked = verify_totals.get("quality_blocked_count", 0)
     pending_review = verify_totals.get("pending_review_count", 0)
     gate_rate = verify_totals.get("gate_pass_rate")
+    obsidian_safe_rate = verify_totals.get("vault_pass_rate")
+    readable_rate = verify_totals.get("readable_page_rate")
+    vault_total_pages = verify_totals.get("vault_validation_total_pages", 0)
+    vault_failed_pages = verify_totals.get("vault_validation_failed_pages", 0)
 
     coverage_prefix = ""
     if download_failed_count > 0:
         coverage_prefix = f"已成功下载 {download_success_count}/{selected_count} 篇论文。"
+
+    # Helper for page-level usability summary
+    def _page_usability_note() -> str:
+        if vault_total_pages == 0:
+            return ""
+        parts = [f"页面级可用性：共 {vault_total_pages} 个页面"]
+        if obsidian_safe_rate is not None:
+            parts.append(f"Obsidian 安全率 {_fmt_rate(obsidian_safe_rate)}")
+        if readable_rate is not None:
+            parts.append(f"可读率 {_fmt_rate(readable_rate)}")
+        return " " + "，".join(parts) + "。"
 
     # All delivered — no quality blocks, all downloads succeeded
     if (
@@ -352,46 +386,63 @@ def _build_verdict(
         and download_failed_count == 0
     ):
         gate_note = f" gate 通过率 {_fmt_rate(gate_rate)}。" if gate_rate is not None else ""
+        if is_isolated:
+            headline = "当前系统已经基本具备逐论文管线转 wiki 的能力"
+        else:
+            headline = "当前系统已经基本具备一键批量转 wiki 的能力"
         return {
             "status": "basically_yes",
-            "headline": "当前系统已经基本具备一键批量转 wiki 的能力",
+            "headline": headline,
             "answer": (
-                f"下载全部成功，{usable_wiki_ready} 篇论文均通过质量门禁并导出了可用 wiki 页面。{gate_note}"
+                f"下载全部成功，{usable_wiki_ready} 篇论文均通过质量门禁并导出了可用 wiki 页面。{gate_note}{_page_usability_note()}{isolated_disclaimer}"
             ).rstrip(),
         }
 
     # Some papers reached usable-wiki-ready
     if usable_wiki_ready > 0:
+        if is_isolated:
+            headline = "当前系统已经部分具备逐论文管线转 wiki 的能力"
+        else:
+            headline = "当前系统已经部分具备一键批量转 wiki 的能力"
         return {
             "status": "partial_yes",
-            "headline": "当前系统已经部分具备一键批量转 wiki 的能力",
+            "headline": headline,
             "answer": (
                 f"{coverage_prefix}"
                 f"{usable_wiki_ready} 篇达到可用 wiki 标准，"
                 f"{quality_blocked} 篇被质量阻断，"
                 f"{pending_review} 篇待审核。"
-            ),
+                f"{_page_usability_note()}{isolated_disclaimer}"
+            ).rstrip(),
         }
 
     # Quality blocks present but no usable wiki
     if quality_blocked > 0 or pending_review > 0:
+        page_note = ""
+        if vault_failed_pages > 0:
+            page_note = f" 其中 {vault_failed_pages} 个页面未通过 Obsidian 安全校验。"
         return {
             "status": "quality_blocked",
-            "headline": "下载成功但验证存在质量阻断",
+            "headline": "下载成功但逐论文管线验证存在质量阻断",
             "answer": (
                 f"{coverage_prefix}"
                 f"{quality_blocked} 篇被质量门禁阻断，"
                 f"{pending_review} 篇待审核。"
-            ),
+                f"{page_note}{_page_usability_note()}{isolated_disclaimer}"
+            ).rstrip(),
         }
 
+    if is_isolated:
+        tail = "验证结果不足以说明系统具备稳定的逐论文管线转 wiki 能力。"
+    else:
+        tail = "验证结果不足以说明系统具备稳定的一键转 wiki 能力。"
     return {
         "status": "not_yet",
         "headline": "下载与验证均未形成稳定结论",
         "answer": (
             f"{coverage_prefix}"
-            "验证结果不足以说明系统具备稳定的一键转 wiki 能力。"
-        ),
+            f"{tail}{isolated_disclaimer}"
+        ).rstrip(),
     }
 
 
@@ -412,6 +463,7 @@ def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
         f"- Manifest name: `{payload['manifest_name']}`",
         f"- Output dir: `{payload['outdir']}`",
         f"- Session dir: `{payload['session_dir']}`",
+        f"- Verification mode: **{payload['verification_mode']}**",
         "",
         "## Sample Coverage",
         "",
@@ -434,6 +486,14 @@ def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
         f"- Usable wiki ready: **{totals['usable_wiki_ready_count']}**",
         f"- Quality blocked: **{totals['quality_blocked_count']}**",
         "",
+        "## Page-Level Usability",
+        "",
+        f"- Total pages validated: **{totals['vault_validation_total_pages']}**",
+        f"- Pages passed validation: **{totals['vault_validation_passed_pages']}**",
+        f"- Pages failed validation: **{totals['vault_validation_failed_pages']}**",
+        f"- Obsidian-safe page rate: **{_fmt_rate(totals['obsidian_safe_page_rate'])}**",
+        f"- Readable page rate: **{_fmt_rate(totals['readable_page_rate'])}**",
+        "",
         "## Verdict",
         "",
         f"**{verdict['headline']}**",
@@ -441,6 +501,15 @@ def _write_summary_md(path: Path, payload: dict[str, Any]) -> None:
         verdict["answer"],
         "",
     ]
+
+    # US-024: Isolated-mode disclaimer in markdown
+    if payload.get("verification_mode") == "isolated_per_paper":
+        lines.extend(
+            [
+                "> **Verification mode: isolated per-paper** (did not validate a unified shared vault)",
+                "",
+            ],
+        )
 
     if payload["manifest_description"]:
         lines.extend(
@@ -538,17 +607,20 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
             config_path=config_path,
             continue_on_error=args.continue_on_error,
         )
-        verify_payload = run_batch(verify_args)
+        verify_payload = run_batch(verify_args, verification_mode="isolated_per_paper")
 
     combined_files = _combine_paper_results(
         selected_papers=selected_papers,
         download_results=download_results,
         verify_payload=verify_payload,
     )
+    effective_mode = verify_payload.get("verification_mode", "isolated_per_paper") if verify_payload else "isolated_per_paper"
+
     verdict = _build_verdict(
         selected_papers=selected_papers,
         download_results=download_results,
         verify_payload=verify_payload,
+        verification_mode=effective_mode,
     )
 
     verify_totals = verify_payload["totals"] if verify_payload else {}
@@ -574,6 +646,7 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
         "manifest_description": manifest["description"],
         "outdir": str(outdir),
         "session_dir": str(session_dir),
+        "verification_mode": effective_mode,
         "downloads_dir": str(downloads_dir),
         "verify_inputs_dir": str(verify_inputs_dir),
         "options": {
@@ -603,6 +676,12 @@ def run_download_and_verify(args: argparse.Namespace) -> dict[str, Any]:
             "pending_review_count": verify_totals.get("pending_review_count", 0),
             "usable_wiki_ready_count": verify_totals.get("usable_wiki_ready_count", 0),
             "quality_blocked_count": verify_totals.get("quality_blocked_count", 0),
+            # US-022: Obsidian-safe and readable page rates
+            "obsidian_safe_page_rate": verify_totals.get("vault_pass_rate"),
+            "readable_page_rate": verify_totals.get("readable_page_rate"),
+            "vault_validation_total_pages": verify_totals.get("vault_validation_total_pages", 0),
+            "vault_validation_passed_pages": verify_totals.get("vault_validation_passed_pages", 0),
+            "vault_validation_failed_pages": verify_totals.get("vault_validation_failed_pages", 0),
         },
         "verdict": verdict,
         "downloads": download_results,

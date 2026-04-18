@@ -13,6 +13,9 @@ from tests.fixtures.build_fixtures import _build_dual_column_pdf, _build_simple_
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "download_and_verify_papers.py"
 
+sys.path.insert(0, str(REPO_ROOT))
+from scripts.download_and_verify_papers import _build_verdict  # noqa: E402
+
 
 def _run_download_and_verify(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -393,3 +396,417 @@ def test_us011_build_verdict_quality_aware() -> None:
     # Should be partial_yes because 1/2 usable_wiki_ready with quality_blocked > 0
     assert verdict["status"] == "partial_yes"
     assert "质量阻断" in verdict["answer"]
+
+
+# ---------------------------------------------------------------------------
+# US-023: Explicit verification-mode field in batch outputs
+# ---------------------------------------------------------------------------
+
+
+def test_us023_download_and_verify_includes_verification_mode(tmp_path: Path) -> None:
+    """AC1: download-and-verify summary.json must include verification_mode field."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    assert "verification_mode" in payload, "Missing verification_mode in download-and-verify summary"
+    assert payload["verification_mode"] == "isolated_per_paper"
+
+    # Session summary should also include it
+    sessions_dir = outdir / "sessions"
+    assert sessions_dir.exists()
+    session_dirs = list(sessions_dir.iterdir())
+    assert len(session_dirs) == 1
+    session_payload = json.loads(
+        (session_dirs[0] / "summary.json").read_text(encoding="utf-8"),
+    )
+    assert "verification_mode" in session_payload
+    assert session_payload["verification_mode"] == "isolated_per_paper"
+
+
+def test_us023_download_and_verify_markdown_renders_verification_mode(tmp_path: Path) -> None:
+    """AC2: markdown summary must render the verification mode."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "Verification mode" in md_text, "Missing Verification mode in markdown summary"
+    assert "isolated_per_paper" in md_text, "Missing isolated_per_paper value in markdown summary"
+
+
+# ---------------------------------------------------------------------------
+# US-024: Prevent isolated-mode summaries from claiming unified wiki validation
+# ---------------------------------------------------------------------------
+
+
+def test_us024_build_verdict_isolated_uses_pipeline_wording() -> None:
+    """AC2: _build_verdict in isolated mode must use '逐论文管线' wording."""
+    verify_payload = {
+        "verdict": {"status": "basically_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 2,
+            "success_count": 2,
+            "usable_wiki_ready_count": 2,
+            "quality_blocked_count": 0,
+            "pending_review_count": 0,
+            "gate_pass_rate": 1.0,
+        },
+    }
+    selected = [{"id": "p1"}, {"id": "p2"}]
+    downloads = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+    ]
+
+    verdict = _build_verdict(
+        selected, downloads, verify_payload,
+        verification_mode="isolated_per_paper",
+    )
+    assert verdict["status"] == "basically_yes"
+    assert "逐论文管线" in verdict["headline"]
+    assert "未对统一共享 wiki 库进行校验" in verdict["answer"]
+
+
+def test_us024_build_verdict_isolated_partial_uses_pipeline_wording() -> None:
+    """AC2: Partial yes in isolated mode uses pipeline wording."""
+    verify_payload = {
+        "verdict": {"status": "partial_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 2,
+            "success_count": 2,
+            "usable_wiki_ready_count": 1,
+            "quality_blocked_count": 1,
+            "pending_review_count": 0,
+            "gate_pass_rate": 0.5,
+        },
+    }
+    selected = [{"id": "p1"}, {"id": "p2"}]
+    downloads = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+    ]
+
+    verdict = _build_verdict(
+        selected, downloads, verify_payload,
+        verification_mode="isolated_per_paper",
+    )
+    assert verdict["status"] == "partial_yes"
+    assert "逐论文管线" in verdict["headline"]
+    assert "未对统一共享 wiki 库进行校验" in verdict["answer"]
+
+
+def test_us024_build_verdict_shared_uses_unified_wording() -> None:
+    """When mode is shared_corpus_vault, the old unified wording is used."""
+    verify_payload = {
+        "verdict": {"status": "basically_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 2,
+            "success_count": 2,
+            "usable_wiki_ready_count": 2,
+            "quality_blocked_count": 0,
+            "pending_review_count": 0,
+            "gate_pass_rate": 1.0,
+        },
+    }
+    selected = [{"id": "p1"}, {"id": "p2"}]
+    downloads = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+    ]
+
+    verdict = _build_verdict(
+        selected, downloads, verify_payload,
+        verification_mode="shared_corpus_vault",
+    )
+    assert verdict["status"] == "basically_yes"
+    assert "一键批量" in verdict["headline"]
+    assert "未对统一共享 wiki 库进行校验" not in verdict["answer"]
+
+
+def test_us024_build_verdict_default_is_isolated() -> None:
+    """AC1: Default verification_mode must be isolated_per_paper."""
+    verify_payload = {
+        "verdict": {"status": "basically_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 1,
+            "success_count": 1,
+            "usable_wiki_ready_count": 1,
+            "quality_blocked_count": 0,
+            "pending_review_count": 0,
+            "gate_pass_rate": 1.0,
+        },
+    }
+    selected = [{"id": "p1"}]
+    downloads = [{"status": "downloaded", "filename": "a.pdf"}]
+
+    verdict = _build_verdict(selected, downloads, verify_payload)
+    assert "逐论文管线" in verdict["headline"]
+    assert "未对统一共享 wiki 库进行校验" in verdict["answer"]
+
+
+def test_us024_markdown_includes_isolated_disclaimer(tmp_path: Path) -> None:
+    """AC1: Markdown output must contain the isolated-mode disclaimer block."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "did not validate a unified shared vault" in md_text
+
+
+def test_us024_build_verdict_isolated_no_downloads_uses_pipeline_wording() -> None:
+    """AC2: No downloads in isolated mode must use pipeline wording."""
+    selected = [{"id": "p1"}]
+    downloads = [{"status": "failed", "filename": "a.pdf"}]
+    verdict = _build_verdict(
+        selected, downloads, None,
+        verification_mode="isolated_per_paper",
+    )
+    assert "逐论文管线" in verdict["answer"]
+
+
+def test_us024_build_verdict_isolated_quality_blocked_uses_pipeline_wording() -> None:
+    """AC2: Quality blocked in isolated mode must use pipeline wording."""
+    verify_payload = {
+        "verdict": {"status": "quality_blocked", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 1,
+            "success_count": 1,
+            "usable_wiki_ready_count": 0,
+            "quality_blocked_count": 1,
+            "pending_review_count": 0,
+            "gate_pass_rate": 0.0,
+        },
+    }
+    selected = [{"id": "p1"}]
+    downloads = [{"status": "downloaded", "filename": "a.pdf"}]
+
+    verdict = _build_verdict(
+        selected, downloads, verify_payload,
+        verification_mode="isolated_per_paper",
+    )
+    assert verdict["status"] == "quality_blocked"
+    assert "逐论文管线" in verdict["headline"]
+
+
+def test_us024_build_verdict_isolated_not_yet_uses_pipeline_wording() -> None:
+    """AC2: Not-yet in isolated mode must use pipeline wording."""
+    verify_payload = {
+        "verdict": {"status": "not_yet", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 1,
+            "success_count": 0,
+            "usable_wiki_ready_count": 0,
+            "quality_blocked_count": 0,
+            "pending_review_count": 0,
+            "gate_pass_rate": None,
+        },
+    }
+    selected = [{"id": "p1"}]
+    downloads = [{"status": "downloaded", "filename": "a.pdf"}]
+
+    verdict = _build_verdict(
+        selected, downloads, verify_payload,
+        verification_mode="isolated_per_paper",
+    )
+    assert verdict["status"] == "not_yet"
+    assert "逐论文管线" in verdict["answer"]
+
+
+# ---------------------------------------------------------------------------
+# US-022: Obsidian-safe and readable page rates in download-and-verify
+# ---------------------------------------------------------------------------
+
+
+def test_us022_page_rate_fields_in_json(tmp_path: Path) -> None:
+    """AC1: summary.json totals must include obsidian_safe_page_rate and readable_page_rate."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    beta = source_dir / "beta.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+    beta.write_bytes(_build_dual_column_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha, beta])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+    totals = payload["totals"]
+    assert "obsidian_safe_page_rate" in totals, "Missing obsidian_safe_page_rate in totals"
+    assert "readable_page_rate" in totals, "Missing readable_page_rate in totals"
+    # Both should be present; readable_page_rate should be >= obsidian_safe_page_rate
+    # (readable is a weaker criterion than Obsidian-safe)
+    obs_rate = totals["obsidian_safe_page_rate"]
+    read_rate = totals["readable_page_rate"]
+    if obs_rate is not None and read_rate is not None:
+        assert read_rate >= obs_rate, (
+            f"readable_page_rate ({read_rate}) should be >= obsidian_safe_page_rate ({obs_rate})"
+        )
+
+
+def test_us022_page_rates_in_root_and_session_summaries(tmp_path: Path) -> None:
+    """AC2: both root and session summary files contain page rate fields."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    root_payload = json.loads((outdir / "summary.json").read_text(encoding="utf-8"))
+
+    sessions_dir = outdir / "sessions"
+    assert sessions_dir.exists()
+    session_dirs = list(sessions_dir.iterdir())
+    assert len(session_dirs) == 1
+    session_json = session_dirs[0] / "summary.json"
+    assert session_json.exists()
+    session_payload = json.loads(session_json.read_text(encoding="utf-8"))
+
+    for payload in (root_payload, session_payload):
+        totals = payload["totals"]
+        assert "obsidian_safe_page_rate" in totals
+        assert "readable_page_rate" in totals
+        assert "vault_validation_total_pages" in totals
+        assert "vault_validation_passed_pages" in totals
+        assert "vault_validation_failed_pages" in totals
+
+
+def test_us022_markdown_includes_page_level_usability(tmp_path: Path) -> None:
+    """AC1/AC3: markdown must include Page-Level Usability section with page rates."""
+    source_dir = tmp_path / "source-pdfs"
+    source_dir.mkdir()
+    alpha = source_dir / "alpha.pdf"
+    alpha.write_bytes(_build_simple_pdf())
+
+    manifest_path = tmp_path / "papers.yaml"
+    _make_manifest(manifest_path, [alpha])
+
+    outdir = tmp_path / "verify-output"
+    result = _run_download_and_verify(
+        "--manifest", str(manifest_path),
+        "--outdir", str(outdir),
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    md_text = (outdir / "summary.md").read_text(encoding="utf-8")
+    assert "## Page-Level Usability" in md_text
+    assert "Obsidian-safe page rate" in md_text
+    assert "Readable page rate" in md_text
+
+
+def test_us022_build_verdict_references_page_usability() -> None:
+    """AC3: _build_verdict answer text references page-level usability."""
+    import sys
+    sys.path.insert(0, str(REPO_ROOT))
+    from scripts.download_and_verify_papers import _build_verdict
+
+    # Simulate verify_payload with page-level validation data
+    verify_payload = {
+        "verdict": {"status": "basically_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 1,
+            "success_count": 1,
+            "usable_wiki_ready_count": 1,
+            "quality_blocked_count": 0,
+            "pending_review_count": 0,
+            "gate_pass_rate": 1.0,
+            "vault_pass_rate": 0.9,
+            "readable_page_rate": 0.95,
+            "vault_validation_total_pages": 10,
+            "vault_validation_passed_pages": 9,
+            "vault_validation_failed_pages": 1,
+        },
+    }
+    selected = [{"id": "p1"}]
+    downloads = [{"status": "downloaded", "filename": "a.pdf"}]
+
+    verdict = _build_verdict(selected, downloads, verify_payload)
+    assert verdict["status"] == "basically_yes"
+    # Answer should reference page-level usability
+    assert "页面级可用性" in verdict["answer"]
+    assert "Obsidian" in verdict["answer"] or "可读率" in verdict["answer"]
+
+
+def test_us022_build_verdict_partial_yes_includes_page_rates() -> None:
+    """AC3: partial_yes verdict also references page-level usability."""
+    import sys
+    sys.path.insert(0, str(REPO_ROOT))
+    from scripts.download_and_verify_papers import _build_verdict
+
+    verify_payload = {
+        "verdict": {"status": "partial_yes", "headline": "test", "answer": "test"},
+        "totals": {
+            "pdfs_processed": 2,
+            "success_count": 2,
+            "usable_wiki_ready_count": 1,
+            "quality_blocked_count": 1,
+            "pending_review_count": 0,
+            "gate_pass_rate": 0.5,
+            "vault_pass_rate": 0.8,
+            "readable_page_rate": 0.85,
+            "vault_validation_total_pages": 10,
+            "vault_validation_passed_pages": 8,
+            "vault_validation_failed_pages": 2,
+        },
+    }
+    selected = [{"id": "p1"}, {"id": "p2"}]
+    downloads = [
+        {"status": "downloaded", "filename": "a.pdf"},
+        {"status": "downloaded", "filename": "b.pdf"},
+    ]
+
+    verdict = _build_verdict(selected, downloads, verify_payload)
+    assert verdict["status"] == "partial_yes"
+    # Answer should reference page-level usability when vault pages exist
+    assert "页面级可用性" in verdict["answer"]

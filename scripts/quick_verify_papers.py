@@ -374,17 +374,24 @@ def _build_verdict(
     *,
     manifest_total: int = 0,
     verified_paper_count: int = 0,
+    verification_mode: str = "isolated_per_paper",
 ) -> dict[str, str]:
     """Build top-level headline and answer from verdict-tier totals.
 
     The verdict is derived from the per-paper classification produced by
     ``_classify_verdict`` rather than raw ``success_count`` / ``wiki_output_count``.
+
+    When *verification_mode* is ``"isolated_per_paper"`` (the default), verdict
+    text is scoped to per-paper pipeline validation and explicitly notes that
+    a unified shared vault was **not** validated.
     """
     total = len(results)
     verdict_counts = Counter(item.get("verdict", "pipeline_runnable") for item in results)
     usable = verdict_counts.get("usable_wiki_ready", 0)
     blocked = verdict_counts.get("quality_blocked", 0)
     runnable = verdict_counts.get("pipeline_runnable", 0)
+
+    is_isolated = verification_mode == "isolated_per_paper"
 
     # Coverage limitation note
     coverage_note = ""
@@ -394,7 +401,18 @@ def _build_verdict(
             "结论仅限于该样本范围）"
         )
 
+    # Isolated-mode disclaimer appended to every non-empty answer
+    isolated_disclaimer = ""
+    if is_isolated:
+        isolated_disclaimer = " 本次运行为逐论文独立管线验证，未对统一共享 wiki 库进行校验。"
+
     if total == 0:
+        if is_isolated:
+            return {
+                "status": "no_input",
+                "headline": "没有发现可验证的 PDF 文件",
+                "answer": "这次没有实际跑任何论文，因此还不能回答系统是否具备逐论文管线转 wiki 能力。",
+            }
         return {
             "status": "no_input",
             "headline": "没有发现可验证的 PDF 文件",
@@ -402,10 +420,13 @@ def _build_verdict(
         }
 
     if usable == total and blocked == 0:
-        headline = "当前系统已经基本具备一键批量转 wiki 的能力"
+        if is_isolated:
+            headline = "当前系统已经基本具备逐论文管线转 wiki 的能力"
+        else:
+            headline = "当前系统已经基本具备一键批量转 wiki 的能力"
         answer = (
             f"这次验证中，所有 {total} 篇论文均通过质量门禁并导出了可用 wiki 页面。"
-            f"{coverage_note}"
+            f"{coverage_note}{isolated_disclaimer}"
         )
         return {
             "status": "basically_yes",
@@ -414,12 +435,15 @@ def _build_verdict(
         }
 
     if usable > 0 and (blocked > 0 or runnable > 0):
-        headline = "当前系统已经部分具备一键批量转 wiki 的能力"
+        if is_isolated:
+            headline = "当前系统已经部分具备逐论文管线转 wiki 的能力"
+        else:
+            headline = "当前系统已经部分具备一键批量转 wiki 的能力"
         answer = (
             f"这次验证中，{usable}/{total} 篇论文达到可用 wiki 标准，"
             f"{blocked} 篇被质量门禁或审核阻断，"
             f"{runnable} 篇未达到可用标准。"
-            f"{coverage_note}"
+            f"{coverage_note}{isolated_disclaimer}"
         )
         return {
             "status": "partial_yes",
@@ -428,22 +452,30 @@ def _build_verdict(
         }
 
     if blocked > 0 and usable == 0:
+        if is_isolated:
+            hl = "当前系统在本次逐论文管线验证中存在质量阻断，尚不具备可用 wiki 交付能力"
+        else:
+            hl = "当前系统在本次验证中存在质量阻断，尚不具备可用 wiki 交付能力"
         return {
             "status": "quality_blocked",
-            "headline": "当前系统在本次验证中存在质量阻断，尚不具备可用 wiki 交付能力",
+            "headline": hl,
             "answer": (
                 f"这次验证中，{blocked} 篇论文被质量门禁或审核流程阻断，"
                 f"没有论文达到可用 wiki 标准。"
-                f"{coverage_note}"
+                f"{coverage_note}{isolated_disclaimer}"
             ).rstrip(),
         }
 
+    if is_isolated:
+        headline = "当前系统还不具备稳定的逐论文管线转 wiki 能力"
+    else:
+        headline = "当前系统还不具备稳定的一键批量转 wiki 能力"
     return {
         "status": "not_yet",
-        "headline": "当前系统还不具备稳定的一键批量转 wiki 能力",
+        "headline": headline,
         "answer": (
             f"这次验证中，没有论文达到可用 wiki 标准。"
-            f"{coverage_note}"
+            f"{coverage_note}{isolated_disclaimer}"
         ).rstrip(),
     }
 
@@ -482,6 +514,7 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         f"- Papers dir: `{payload['papers_dir']}`",
         f"- Config: `{payload['config_path']}`",
         f"- Output dir: `{payload['outdir']}`",
+        f"- Verification mode: **{payload['verification_mode']}**",
         "",
         "## Sample Coverage",
         "",
@@ -525,6 +558,15 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
         verdict["answer"],
         "",
     ]
+
+    # US-024: Isolated-mode disclaimer in markdown
+    if payload.get("verification_mode") == "isolated_per_paper":
+        lines.extend(
+            [
+                "> **Verification mode: isolated per-paper** (did not validate a unified shared vault)",
+                "",
+            ],
+        )
 
     if payload["failure_stage_histogram"]:
         lines.extend(
@@ -584,7 +626,7 @@ def _write_summary_md(outdir: Path, payload: dict[str, Any]) -> Path:
     return summary_md_path
 
 
-def run_batch(args: argparse.Namespace) -> dict[str, Any]:
+def run_batch(args: argparse.Namespace, *, verification_mode: str = "isolated_per_paper") -> dict[str, Any]:
     papers_dir = args.papers_dir.resolve()
     if not papers_dir.exists() or not papers_dir.is_dir():
         msg = f"papers_dir must be an existing directory: {papers_dir}"
@@ -597,6 +639,10 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
     config_path = args.config.resolve()
     if not config_path.exists():
         msg = f"Config file not found: {config_path}"
+        raise ValueError(msg)
+
+    if verification_mode not in ("isolated_per_paper", "shared_corpus_vault"):
+        msg = f"verification_mode must be 'isolated_per_paper' or 'shared_corpus_vault', got '{verification_mode}'"
         raise ValueError(msg)
 
     outdir = (args.outdir or _default_outdir()).resolve()
@@ -750,12 +796,32 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
         if item.get("vault_validation", {}).get("failed_pages", 0) > 0
     )
 
+    # US-022: Readable page rate — pages without readability-impacting issues
+    _READABILITY_ISSUE_TYPES = frozenset({"unreadable_slug", "long_garbled_name"})
+    _readable_pages = 0
+    for item in results:
+        vv = item.get("vault_validation", {})
+        issues = vv.get("issues", [])
+        # Collect page paths that have readability issues
+        unreadable_paths: set[str] = set()
+        for issue in issues:
+            if issue.get("issue_type") in _READABILITY_ISSUE_TYPES:
+                path = issue.get("page_path", "")
+                if path:
+                    unreadable_paths.add(path)
+        _total = vv.get("total_pages", 0)
+        _readable_pages += _total - len(unreadable_paths)
+    readable_page_rate: float | None = None
+    if vault_validation_total_pages > 0:
+        readable_page_rate = round(_readable_pages / vault_validation_total_pages, 4)
+
     payload = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "repo_root": str(REPO_ROOT),
         "papers_dir": str(papers_dir),
         "config_path": str(config_path),
         "outdir": str(outdir),
+        "verification_mode": verification_mode,
         "options": {
             "pattern": args.pattern,
             "max_files": args.max_files,
@@ -800,12 +866,15 @@ def run_batch(args: argparse.Namespace) -> dict[str, Any]:
             # US-021: Paper-level validator pass/fail counts
             "vault_validated_paper_pass_count": vault_validated_paper_pass_count,
             "vault_validated_paper_fail_count": vault_validated_paper_fail_count,
+            # US-022: Readable page rate
+            "readable_page_rate": readable_page_rate,
         },
         "failure_stage_histogram": _failure_stage_histogram(results),
         "verdict": _build_verdict(
             results,
             manifest_total=discovered_count,
             verified_paper_count=len(results),
+            verification_mode=verification_mode,
         ),
         "files": results,
     }
